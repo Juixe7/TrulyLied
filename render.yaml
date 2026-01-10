@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: trulylied-python-ai
+    env: python
+    plan: free
+    rootDir: python-ai
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: SERPER_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: YOUTUBE_API_KEY
+        sync: false
+
+  - type: web
+    name: trulylied-node-backend
+    env: node
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MONGO_URI
+        sync: false
+      - key: PYTHON_AI_URL
+        value: http://trulylied-python-ai:10000

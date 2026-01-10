@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  python-ai:
+    build:
+      context: ./python-ai
+      dockerfile: Dockerfile
+    image: trulylied-python-ai:latest
+    container_name: trulylied-python-ai
+    ports:
+      - "8000:8000"
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - SERPER_API_KEY=${SERPER_API_KEY}
+      - HF_TOKEN=${HF_TOKEN}
+      - YOUTUBE_API_KEY=${YOUTUBE_API_KEY}
+    restart: unless-stopped
+
+  node-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: trulylied-node-backend:latest
+    container_name: trulylied-node-backend
+    ports:
+      - "8082:8080"
+    environment:
+      - PYTHON_AI_URL=http://python-ai:8000
+      - MONGO_URI=${MONGO_URI}
+    depends_on:
+      - python-ai
+    restart: unless-stopped
