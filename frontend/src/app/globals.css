@@ -1,0 +1,193 @@
+@import "tailwindcss";
+
+/* ─── Design Tokens ────────────────────────────────────────────── */
+:root {
+  /* Backgrounds */
+  --bg-base:     #080808;
+  --bg-surface:  #111111;
+  --bg-elevated: #161616;
+  --bg-overlay:  #1a1a1a;
+
+  /* Borders */
+  --border-subtle:  rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.09);
+  --border-strong:  rgba(255, 255, 255, 0.14);
+
+  /* Text */
+  --text-primary:   #ffffff;
+  --text-secondary: #a1a1aa;
+  --text-muted:     #52525b;
+  --text-disabled:  #3f3f46;
+
+  /* Accent palette */
+  --accent-violet: #7c3aed;
+  --accent-indigo: #4f46e5;
+  --accent-live:   #ef4444;
+  --accent-true:   #10b981;
+  --accent-false:  #ef4444;
+  --accent-warn:   #f59e0b;
+
+  /* Typography scale */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ─── Base reset ───────────────────────────────────────────────── */
+@layer base {
+  * {
+    box-sizing: border-box;
+    border-color: var(--border-subtle);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-primary);
+    font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    letter-spacing: -0.011em;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+  /* Focus ring */
+  :focus-visible {
+    outline: 2px solid var(--accent-violet);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+/* ─── Typography utilities ─────────────────────────────────────── */
+.heading-hero {
+  font-size: clamp(2.75rem, 6vw, 5rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.04;
+  color: var(--text-primary);
+}
+
+.heading-xl {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.heading-lg {
+  font-size: 1.375rem;
+  font-weight: 650;
+  letter-spacing: -0.022em;
+  line-height: 1.25;
+}
+
+.heading-md {
+  font-size: 1.0625rem;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.label-caps {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ─── Surface / Panel components ───────────────────────────────── */
+
+/* Primary surface — replaces glass-panel */
+.surface-panel {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+
+/* Slightly elevated surface */
+.surface-elevated {
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+
+/* Keep glass-panel as alias so existing code doesn't break, but it now uses clean style */
+.glass-panel {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+}
+
+/* ─── Gradient text ────────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #818cf8 0%, #a78bfa 50%, #c084fc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ─── Verdict colour utilities ─────────────────────────────────── */
+.verdict-true    { --v-bg: rgba(16,185,129,0.08); --v-border: rgba(16,185,129,0.18); --v-text: #10b981; }
+.verdict-false   { --v-bg: rgba(239,68,68,0.08);  --v-border: rgba(239,68,68,0.18);  --v-text: #ef4444; }
+.verdict-mislead { --v-bg: rgba(245,158,11,0.08); --v-border: rgba(245,158,11,0.18); --v-text: #f59e0b; }
+.verdict-unknown { --v-bg: rgba(82,82,91,0.12);   --v-border: rgba(82,82,91,0.25);   --v-text: #71717a; }
+
+/* ─── Tag / badge ──────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.badge-pill {
+  border-radius: 999px;
+}
+
+/* ─── Animated underline hover ─────────────────────────────────── */
+.nav-link {
+  position: relative;
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: color 150ms ease;
+  letter-spacing: -0.01em;
+}
+.nav-link:hover { color: var(--text-primary); }
+.nav-link.active { color: var(--text-primary); }
+
+/* ─── Input base ───────────────────────────────────────────────── */
+.input-base {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  border-radius: 10px;
+  transition: border-color 150ms ease;
+  outline: none;
+}
+.input-base::placeholder { color: var(--text-muted); }
+.input-base:focus { border-color: var(--border-strong); }
+
+/* ─── Subtle divider ───────────────────────────────────────────── */
+.divider { border-color: var(--border-subtle); }
+
+/* ─── Reduced motion ───────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
