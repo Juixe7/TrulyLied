@@ -170,6 +170,12 @@ def download_youtube_audio(url_or_id: str, max_duration_sec: int = 900) -> Optio
             'no_warnings': True,
             'noplaylist': True,
             'max_filesize': 24 * 1024 * 1024, # 24 MB safety cap to stay within Groq Whisper 25MB limit
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'ios', 'web']
+                }
+            },
+            'socket_timeout': 12,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
