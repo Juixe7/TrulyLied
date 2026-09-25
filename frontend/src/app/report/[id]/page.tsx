@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, useRef, use } from "react";
 import { useRouter } from "next/navigation";
 import { API_URL, WS_URL } from "@/lib/config";
 import {
   CheckCircle2, XCircle, AlertTriangle, HelpCircle, Loader2,
   Link as LinkIcon, HeartPulse, Quote, AlertOctagon, ShieldCheck,
   Copy, Check, Clock, Ban, BadgeCheck, ExternalLink, X,
-  RotateCcw, Play, Sparkles,
+  RotateCcw, Play, Sparkles, Send, MessageSquare, ChevronDown,
+  ChevronUp, FileText, Compass, Layers
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import CredibilityGauge from "@/components/CredibilityGauge";
@@ -23,6 +24,30 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
   const [copied, setCopied] = useState(false);
   const [selectedClaim, setSelectedClaim] = useState<any>(null);
   const [retrying, setRetrying] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+
+  // ── Interactive AI Investigation Chat State ──
+  const [chatQuery, setChatQuery] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatHistory, setChatHistory] = useState<{ question: string; answer: string }[]>([]);
+
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  const seekToTimestamp = (seconds: number) => {
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      iframeRef.current.contentWindow.postMessage(
+        JSON.stringify({ event: "command", func: "seekTo", args: [seconds, true] }),
+        "*"
+      );
+    }
+  };
+
+  const formatSeconds = (sec: number | null | undefined) => {
+    if (sec == null || isNaN(sec)) return "00:00";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
 
   const handleRetry = async () => {
     if (!reportData?.url) return;
@@ -44,57 +69,123 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     }
   };
 
-  useEffect(() => {
-    fetch(`${API_URL}/api/report/${resolvedParams.id}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.report) setReportData(data.report);
-        if (data.chunks) setChunks(data.chunks);
-        if (data.report?.status === "done") setStatus("done");
-        else setStatus(data.report?.status || "processing");
-      })
-      .catch(console.error);
+  const handleAskChat = async (presetQuestion?: string) => {
+    const q = presetQuestion || chatQuery;
+    if (!q.trim() || chatLoading) return;
+    setChatLoading(true);
+    if (!presetQuestion) setChatQuery("");
 
-    const ws = new WebSocket(`${WS_URL}/ws/report/${resolvedParams.id}`);
-    ws.onopen = () => console.log("WS Connected");
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.status === "sync_state") {
-        if (msg.report) setReportData(msg.report);
-        if (msg.chunks && msg.chunks.length > 0) {
-          setChunks(msg.chunks);
+    const factual = chunks.filter(c => c.type === "factual_claim");
+    const summaryCtx = factual.slice(0, 6).map(c => `Claim: "${c.text}" | Verdict: ${c.verdict} | Reasoning: ${c.reasoning}`).join("\n");
+    const fullCtx = `Document Title: "${reportData?.title || 'Unknown'}"\nDomain: ${reportData?.domain}\nOverall Credibility Score: ${reportData?.credibility_score}\n${summaryCtx}`;
+
+    try {
+      const res = await fetch(`${API_URL}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q, context: fullCtx }),
+      });
+      const data = await res.json();
+      setChatHistory(prev => [{ question: q, answer: data.answer || "No response received." }, ...prev]);
+    } catch (e) {
+      setChatHistory(prev => [{ question: q, answer: "Connection error: unable to contact AI verification assistant." }, ...prev]);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+
+    const connect = () => {
+      fetch(`${API_URL}/api/report/${resolvedParams.id}`)
+        .then(res => res.json())
+        .then(data => {
+          if (!isMounted) return;
+          if (data.report) setReportData(data.report);
+          if (data.chunks) setChunks(data.chunks);
+          if (data.report?.status === "done" || data.report?.status === "completed_with_warnings") setStatus("done");
+          else setStatus(data.report?.status || "processing");
+        })
+        .catch(console.error);
+
+      ws = new WebSocket(`${WS_URL}/ws/report/${resolvedParams.id}`);
+      ws.onopen = () => console.log("[ws] Connected to TrulyLied telemetry stream");
+      
+      ws.onmessage = (event) => {
+        if (!isMounted) return;
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.status === "sync_state") {
+            if (msg.report) setReportData(msg.report);
+            if (msg.chunks && msg.chunks.length > 0) {
+              setChunks(msg.chunks);
+            }
+            if (msg.total_chunks) {
+              setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
+            }
+            if (msg.report?.status === "done" || msg.report?.status === "completed_with_warnings") {
+              setStatus("done");
+            } else if (msg.report?.status) {
+              setStatus(msg.report.status);
+            }
+          } else if (msg.status === "extracted") {
+            setStatus("extracted");
+            setReportData((prev: any) => ({ ...prev, ...(msg.title && { title: msg.title }), ...(msg.domain && { domain: msg.domain }) }));
+          } else if (msg.status === "decomposed") {
+            setStatus("decomposed");
+            if (msg.total_chunks) setProgress(p => ({ ...p, total: msg.total_chunks }));
+          } else if (msg.status === "chunk_pending" && msg.chunk) {
+            setChunks(prev => {
+              if (prev.some(c => c.chunk_id === msg.chunk.chunk_id)) return prev;
+              return [...prev, { ...msg.chunk, status: "pending" }];
+            });
+          } else if (msg.status === "chunk_done" && msg.chunk) {
+            if (msg.total_chunks) {
+              setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
+              setStatus("processing");
+            }
+            setChunks(prev => {
+              const exists = prev.find(c => c.chunk_id === msg.chunk.chunk_id);
+              if (exists) return prev.map(c => c.chunk_id === msg.chunk.chunk_id ? msg.chunk : c);
+              return [...prev, msg.chunk];
+            });
+          } else if (msg.status === "error") {
+            setStatus("failed");
+            setReportData((prev: any) => ({ ...prev, status: "failed", error_msg: msg.error }));
+          } else if (msg.status === "report_done") {
+            setStatus("done");
+            fetch(`${API_URL}/api/report/${resolvedParams.id}`)
+              .then(res => res.json())
+              .then(data => {
+                if (!isMounted) return;
+                if (data.report) setReportData(data.report);
+                if (data.chunks) setChunks(data.chunks);
+              });
+          }
+        } catch (err) {
+          console.error("[ws] Frame parse error:", err);
         }
-        if (msg.total_chunks) {
-          setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
+      };
+
+      ws.onclose = () => {
+        if (!isMounted) return;
+        console.log("[ws] Stream closed");
+        if (status !== "done" && status !== "failed") {
+          reconnectTimeout = setTimeout(connect, 3000);
         }
-        if (msg.report?.status === "done" || msg.report?.status === "completed_with_warnings") {
-          setStatus("done");
-        } else if (msg.report?.status) {
-          setStatus(msg.report.status);
-        }
-      } else if (msg.status === "extracted" || msg.status === "decomposed") {
-        setStatus(msg.status);
-      } else if (msg.status === "chunk_done" && msg.chunk) {
-        if (msg.total_chunks) {
-          setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
-          setStatus("processing");
-        }
-        setChunks(prev => {
-          const exists = prev.find(c => c.chunk_id === msg.chunk.chunk_id);
-          if (exists) return prev.map(c => c.chunk_id === msg.chunk.chunk_id ? msg.chunk : c);
-          return [msg.chunk, ...prev];
-        });
-      } else if (msg.status === "report_done") {
-        setStatus("done");
-        fetch(`${API_URL}/api/report/${resolvedParams.id}`)
-          .then(res => res.json())
-          .then(data => {
-            if (data.report) setReportData(data.report);
-            if (data.chunks) setChunks(data.chunks);
-          });
-      }
+      };
     };
-    return () => ws.close();
+
+    connect();
+
+    return () => {
+      isMounted = false;
+      if (ws) ws.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
   }, [resolvedParams.id]);
 
   const handleCopy = async () => {
@@ -163,7 +254,9 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
           <div className="flex flex-col md:flex-row gap-6 justify-between items-start md:items-center">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 mb-3 flex-wrap">
-                <h1 className="heading-lg text-white">Analysis Report</h1>
+                <h1 className="heading-lg text-white max-w-xl truncate" title={reportData?.title || "Analysis Report"}>
+                  {reportData?.title || "Analysis Report"}
+                </h1>
                 {status === "failed" ? (
                   <span className="badge badge-pill bg-red-500/15 text-red-400 border border-red-500/30">
                     <XCircle className="w-3 h-3" /> Failed
@@ -178,6 +271,11 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                     <CheckCircle2 className="w-3 h-3" /> Complete
                   </span>
                 )}
+                {reportData?.completed_at && reportData?.created_at && (
+                  <span className="text-[11px] font-mono text-zinc-400 bg-white/5 border border-white/8 px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                    ⚡ {Math.max(0.5, (new Date(reportData.completed_at).getTime() - new Date(reportData.created_at).getTime()) / 1000).toFixed(1)}s
+                  </span>
+                )}
               </div>
 
               {reportData && (
@@ -188,14 +286,14 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                   className="flex items-center gap-2 text-zinc-400 hover:text-white transition-colors text-[13px] truncate max-w-full"
                 >
                   <LinkIcon className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{reportData.domain}{reportData.title && ` — ${reportData.title}`}</span>
+                  <span className="truncate">{reportData.domain}{reportData.author && ` • by ${reportData.author}`}</span>
                 </a>
               )}
 
               <div className="flex items-center gap-2 mt-4">
                 <button
                   onClick={handleCopy}
-                  className="flex items-center gap-1.5 text-[12px] text-zinc-400 hover:text-white bg-white/5 hover:bg-white/8 border border-white/8 px-3 py-1.5 rounded-lg transition-all"
+                  className="flex items-center gap-1.5 text-[12px] text-zinc-400 hover:text-white bg-white/5 hover:bg-white/8 border border-white/8 px-3 py-1.5 rounded-lg transition-all cursor-pointer"
                 >
                   {copied
                     ? <><Check className="w-3.5 h-3.5 text-emerald-400" /> Copied</>
@@ -281,7 +379,7 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
           </motion.div>
         )}
 
-        {/* YouTube Video Player Embed */}
+        {/* YouTube Video Player Embed with Timestamp Seeking */}
         {reportData?.content_type === "youtube" && (() => {
           const match = reportData.url?.match(/(?:v=|youtu\.be\/|shorts\/)([a-zA-Z0-9_-]{11})/);
           const videoId = match ? match[1] : null;
@@ -292,11 +390,12 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                 <span className="text-xs uppercase tracking-wider font-semibold text-zinc-400 flex items-center gap-1.5">
                   <Play className="w-3.5 h-3.5 text-rose-400" /> Source YouTube Video
                 </span>
-                <span className="text-[11px] text-zinc-500">ID: {videoId}</span>
+                <span className="text-[11px] text-zinc-500">ID: {videoId} • Click timestamps below to seek</span>
               </div>
               <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black/60 border border-white/8 shadow-2xl">
                 <iframe
-                  src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0`}
+                  ref={iframeRef}
+                  src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0&enablejsapi=1`}
                   title="YouTube video player"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
@@ -306,6 +405,69 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             </div>
           );
         })()}
+
+        {/* Author Bias & Source Profile Card */}
+        {reportData?.author_bias && status === "done" && (
+          <section className="glass-card p-5 rounded-2xl space-y-3 border border-white/8">
+            <h2 className="heading-md text-white flex items-center gap-2">
+              <Compass className="w-4 h-4 text-emerald-400" />
+              Editorial & Author Profile
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/6">
+                <p className="label-caps mb-1">Political Lean</p>
+                <p className="text-white text-sm font-semibold capitalize">
+                  {reportData.author_bias_meta?.political_lean || "Balanced / Non-Partisan"}
+                </p>
+              </div>
+              <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/6">
+                <p className="label-caps mb-1">Emotional Tone</p>
+                <p className="text-white text-sm font-semibold capitalize">
+                  {reportData.author_bias_meta?.emotional_tone || "Objective / Analytical"}
+                </p>
+              </div>
+              <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/6">
+                <p className="label-caps mb-1">Source Credibility Tier</p>
+                <p className="text-white text-sm font-semibold uppercase">
+                  {reportData.source_credibility || "Standard"}
+                </p>
+              </div>
+            </div>
+            <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/12 text-xs text-zinc-300 leading-relaxed">
+              {reportData.author_bias}
+            </div>
+          </section>
+        )}
+
+        {/* Collapsible Original Text / Transcript Section */}
+        {reportData?.raw_text && (
+          <section className="surface-panel p-5 rounded-2xl space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="heading-md text-white flex items-center gap-2">
+                <FileText className="w-4 h-4 text-violet-400" />
+                {reportData.content_type === "youtube" ? "Original Video Transcript" : "Extracted Content Body"}
+                <span className="label-caps text-zinc-500 ml-1">
+                  ({reportData.raw_text.split(/\s+/).length} words)
+                </span>
+              </h2>
+              <button
+                onClick={() => setShowTranscript(prev => !prev)}
+                className="text-xs text-violet-300 hover:text-violet-200 font-medium px-3 py-1.5 rounded-lg bg-violet-500/10 hover:bg-violet-500/20 border border-violet-500/20 transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                {showTranscript ? <><ChevronUp className="w-3.5 h-3.5" /> Hide Text</> : <><ChevronDown className="w-3.5 h-3.5" /> Read Full Text</>}
+              </button>
+            </div>
+            {showTranscript && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                className="p-4 rounded-xl bg-black/60 border border-white/8 max-h-96 overflow-y-auto text-xs text-zinc-300 leading-relaxed whitespace-pre-wrap font-sans"
+              >
+                {reportData.raw_text}
+              </motion.div>
+            )}
+          </section>
+        )}
 
         {/* Progress bar */}
         {status === "processing" && progress.total > 0 && (
@@ -453,49 +615,123 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             </h2>
 
             <AnimatePresence>
-              {chunks.filter(c => c.type === "factual_claim").map(chunk => (
-                <motion.div
-                  key={chunk.chunk_id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  onClick={() => setSelectedClaim(chunk)}
-                  className={`p-4 rounded-xl border cursor-pointer hover:opacity-90 transition-all ${getVerdictStyle(chunk.verdict)}`}
-                >
-                  <div className="flex gap-3 items-start">
-                    <div className="mt-0.5 shrink-0">{getVerdictIcon(chunk.verdict)}</div>
-                    <div className="flex-1 space-y-2.5 min-w-0">
-                      <p className="text-zinc-200 leading-relaxed text-[13.5px]">"{chunk.text}"</p>
-                      {chunk.verdict && chunk.verdict !== "ERROR" && (
-                        <div className="flex flex-wrap gap-2 items-center">
-                          <span className={`badge ${getVerdictBadgeStyle(chunk.verdict)}`}>{chunk.verdict}</span>
-                          <span className="text-[12px] text-zinc-500">{(chunk.confidence * 100).toFixed(0)}% confidence</span>
-                          {chunk.date_context && (
-                            <span className="text-[12px] text-zinc-600 italic bg-black/20 px-2 py-0.5 rounded">
-                              {chunk.date_context}
+              {chunks.filter(c => c.type === "factual_claim").map((chunk, idx) => {
+                const isPending = chunk.status === "pending" || (!chunk.verdict && status !== "done");
+
+                if (isPending) {
+                  return (
+                    <motion.div
+                      key={chunk.chunk_id || idx}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="p-4 rounded-xl border border-violet-500/20 bg-violet-500/5 shimmer-pulse space-y-2.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="badge bg-violet-500/15 text-violet-300 border border-violet-500/25 flex items-center gap-1.5 text-[11px]">
+                          <Loader2 className="w-3 h-3 animate-spin text-violet-400" />
+                          Decomposed • Verifying in CRAG DAG...
+                        </span>
+                        {chunk.start_time != null && (
+                          <span className="text-[11px] font-mono text-zinc-500">
+                            ⏱ {formatSeconds(chunk.start_time)}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-zinc-300 text-[13.5px] leading-relaxed italic">"{chunk.text}"</p>
+                    </motion.div>
+                  );
+                }
+
+                return (
+                  <motion.div
+                    key={chunk.chunk_id}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    onClick={() => setSelectedClaim(chunk)}
+                    className={`p-4 rounded-xl border cursor-pointer hover:opacity-95 transition-all ${getVerdictStyle(chunk.verdict)}`}
+                  >
+                    <div className="flex gap-3 items-start">
+                      <div className="mt-0.5 shrink-0">{getVerdictIcon(chunk.verdict)}</div>
+                      <div className="flex-1 space-y-2.5 min-w-0">
+                        <p className="text-zinc-200 leading-relaxed text-[13.5px]">"{chunk.text}"</p>
+                        
+                        {chunk.verdict && chunk.verdict !== "ERROR" && (
+                          <div className="flex flex-wrap gap-2 items-center">
+                            <span className={`badge ${getVerdictBadgeStyle(chunk.verdict)}`}>{chunk.verdict}</span>
+                            <span className="text-[12px] text-zinc-400 font-mono">
+                              {(chunk.confidence * 100).toFixed(0)}% confidence
                             </span>
-                          )}
-                          {chunk.reasoning?.includes("⚡ Resolved from Semantic Cache") && (
-                            <span className="badge bg-violet-500/15 text-violet-400 border border-violet-500/25 flex items-center gap-1 text-[11px]">
-                              ⚡ Semantic Cache Hit (&lt;50ms)
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      {chunk.citations?.length > 0 && (
-                        <div className="pt-2.5 border-t border-white/5 space-y-1">
-                          <p className="label-caps">Sources</p>
-                          {chunk.citations.map((cite: string, i: number) => (
-                            <a key={i} href={cite} target="_blank" rel="noreferrer"
-                              className="text-[12px] text-blue-400 hover:text-blue-300 underline underline-offset-2 truncate block">
-                              {cite}
-                            </a>
-                          ))}
-                        </div>
-                      )}
+                            
+                            {chunk.start_time != null && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  seekToTimestamp(chunk.start_time);
+                                }}
+                                className="inline-flex items-center gap-1 text-[11px] font-mono bg-violet-500/15 text-violet-300 border border-violet-500/25 px-2 py-0.5 rounded-full hover:bg-violet-500/30 transition-colors cursor-pointer"
+                                title="Click to jump to this moment in video"
+                              >
+                                <Play className="w-2.5 h-2.5 fill-current" /> {formatSeconds(chunk.start_time)}
+                              </button>
+                            )}
+
+                            {chunk.status === "degraded" && (
+                              <span className="badge bg-amber-500/15 text-amber-300 border border-amber-500/25 text-[11px]">
+                                ⚠️ Fallback
+                              </span>
+                            )}
+
+                            {chunk.is_cached && (
+                              <span className="badge bg-violet-500/15 text-violet-400 border border-violet-500/25 flex items-center gap-1 text-[11px]">
+                                ⚡ Qdrant Cache Hit (&lt;50ms)
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Inline AI Reasoning Accordion */}
+                        {chunk.reasoning && (
+                          <details
+                            className="mt-2 text-xs group"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <summary className="cursor-pointer text-violet-400 hover:text-violet-300 font-medium flex items-center gap-1 select-none py-1">
+                              <span>💡 View AI Verification Rationale</span>
+                            </summary>
+                            <div className="mt-2 p-3 rounded-lg bg-black/40 border border-white/8 text-zinc-300 text-xs leading-relaxed space-y-2">
+                              <p>{chunk.reasoning}</p>
+                              {chunk.critic_notes && (
+                                <div className="pt-2 border-t border-white/5 text-amber-300/80">
+                                  <span className="font-semibold text-amber-400">⚖️ Red-Team Critic:</span> {chunk.critic_notes}
+                                </div>
+                              )}
+                            </div>
+                          </details>
+                        )}
+
+                        {chunk.citations?.length > 0 && (
+                          <div className="pt-2.5 border-t border-white/5 space-y-1">
+                            <p className="label-caps">Sources</p>
+                            {chunk.citations.map((cite: string, i: number) => (
+                              <a
+                                key={i}
+                                href={cite}
+                                target="_blank"
+                                rel="noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[12px] text-blue-400 hover:text-blue-300 underline underline-offset-2 truncate block"
+                              >
+                                {cite}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                </motion.div>
-              ))}
+                  </motion.div>
+                );
+              })}
             </AnimatePresence>
 
             {chunks.filter(c => c.type === "factual_claim").length === 0 && (
@@ -525,13 +761,16 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                   <div key={chunk.chunk_id} className="surface-panel p-4 space-y-2">
                     <Quote className="w-3.5 h-3.5 text-zinc-600" />
                     <p className="text-zinc-400 italic text-[12px] leading-relaxed line-clamp-4">"{chunk.text}"</p>
-                    <div className="flex justify-end">
+                    <div className="flex justify-between items-center pt-1 border-t border-white/5">
+                      <span className="text-[11px] text-zinc-500">
+                        {chunk.confidence ? `${(chunk.confidence * 100).toFixed(0)}% confidence` : "Tone analysis"}
+                      </span>
                       <span className={`badge ${
                         chunk.sentiment === "POSITIVE" ? "bg-emerald-500/12 text-emerald-400" :
                         chunk.sentiment === "NEGATIVE" ? "bg-red-500/12 text-red-400" :
                         "bg-zinc-800 text-zinc-400"
                       }`}>
-                        {chunk.sentiment || "—"}
+                        {chunk.sentiment || "NEUTRAL"}
                       </span>
                     </div>
                   </div>
@@ -555,8 +794,10 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                   <div key={chunk.chunk_id} className={`p-4 rounded-xl border ${getVerdictStyle(chunk.verdict)} space-y-2`}>
                     <p className="text-zinc-300 text-[12px] line-clamp-3">"{chunk.text}"</p>
                     <div className="flex justify-between items-center pt-2 border-t border-white/5">
-                      <span className="label-caps">{chunk.verdict}</span>
-                      <span className="text-[11px] text-zinc-500">Score: {chunk.toxicity_score?.toFixed(2)}</span>
+                      <span className="label-caps">{chunk.verdict || "CLEAN"}</span>
+                      <span className="text-[11px] text-zinc-500 font-mono">
+                        Score: {((chunk.toxicity_score || 0) * 100).toFixed(0)}%
+                      </span>
                     </div>
                   </div>
                 ))
@@ -564,6 +805,97 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             </section>
           </div>
         </div>
+
+        {/* ── Interactive AI Fact-Checking Assistant ── */}
+        <section className="glass-card p-6 rounded-2xl border border-violet-500/20 shadow-2xl shadow-violet-500/5 space-y-4 mt-8">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-violet-500/20 border border-violet-500/30 flex items-center justify-center">
+                <Sparkles className="w-5 h-5 text-violet-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold text-sm flex items-center gap-2">
+                  Interactive AI Investigation Assistant
+                  <span className="badge bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 text-[10px]">
+                    Live RAG
+                  </span>
+                </h3>
+                <p className="text-[11.5px] text-zinc-400">Ask any deep-dive question grounded in this report and live web search</p>
+              </div>
+            </div>
+            <span className="text-[11px] font-mono text-zinc-500 bg-white/5 px-2.5 py-1 rounded-lg border border-white/6">
+              Groq LPU + Multi-Agent Grounding
+            </span>
+          </div>
+
+          {/* Chat History / Output */}
+          {chatHistory.length > 0 && (
+            <div className="space-y-3 pt-2">
+              {chatHistory.map((item, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-4 rounded-xl bg-black/60 border border-violet-500/20 space-y-2 text-xs"
+                >
+                  <div className="flex items-center justify-between text-zinc-400 border-b border-white/5 pb-2">
+                    <span className="font-semibold text-violet-300 flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-violet-400" />
+                      Q: {item.question}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 font-mono">Grounded Answer</span>
+                  </div>
+                  <p className="text-zinc-200 leading-relaxed whitespace-pre-wrap">{item.answer}</p>
+                </motion.div>
+              ))}
+            </div>
+          )}
+
+          {/* Preset Questions */}
+          <div className="flex flex-wrap gap-2 pt-1">
+            {[
+              "Summarize the false claims and why they are wrong",
+              "What are the most reliable sources on this topic?",
+              "Explain the scientific or factual consensus",
+            ].map((preset, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => handleAskChat(preset)}
+                disabled={chatLoading}
+                className="text-[11px] px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-violet-500/15 border border-white/8 hover:border-violet-500/30 text-zinc-300 hover:text-white transition-all cursor-pointer disabled:opacity-50"
+              >
+                💬 {preset}
+              </button>
+            ))}
+          </div>
+
+          {/* Input Form */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAskChat();
+            }}
+            className="flex gap-2 pt-1"
+          >
+            <input
+              type="text"
+              value={chatQuery}
+              onChange={(e) => setChatQuery(e.target.value)}
+              placeholder="Ask a question about this content or any specific claim..."
+              disabled={chatLoading}
+              className="flex-1 bg-black/60 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder:text-zinc-600 focus:outline-none focus:border-violet-500 transition-colors"
+            />
+            <button
+              type="submit"
+              disabled={!chatQuery.trim() || chatLoading}
+              className="px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+            >
+              {chatLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Ask
+            </button>
+          </form>
+        </section>
       </div>
 
       {/* Deep-Dive Modal */}

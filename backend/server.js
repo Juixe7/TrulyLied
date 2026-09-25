@@ -9,7 +9,7 @@ const axios = require('axios');
 const { createClient } = require('redis');
 const Report = require('./models/Report');
 const Chunk = require('./models/Chunk');
-const { setWss, runPipeline } = require('./pipeline');
+const { setWss, runPipeline, markFailed } = require('./pipeline');
 
 const app = express();
 app.use(cors());
@@ -22,6 +22,11 @@ setWss(wss);
 // ── Redis Pub/Sub for Horizontally Scaled WebSockets ──
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379/0';
 const redisSubscriber = createClient({ url: REDIS_URL });
+
+redisSubscriber.on('error', (err) => {
+  // Prevent unhandled error events from crashing Node process
+  console.log('[redis] Redis Subscriber warning:', err.message);
+});
 
 redisSubscriber.connect()
   .then(() => {
@@ -82,32 +87,60 @@ function detectContentType(url) {
 
 const PYTHON_AI_URL = process.env.PYTHON_AI_URL || 'http://localhost:8000';
 
+// ── Interactive Fact-Checking AI Deep-Dive Chat (Grounding with Live Web Search) ──
+const handleChatProxy = async (req, res) => {
+  const { question, context } = req.body;
+  if (!question) return res.status(400).json({ error: 'Question is required' });
+  try {
+    const response = await axios.post(`${PYTHON_AI_URL}/chat`, { question, context: context || '' }, { timeout: 35000 });
+    return res.json(response.data);
+  } catch (err) {
+    console.error('[chat-proxy] AI chat request failed:', err.message);
+    return res.status(502).json({
+      answer: 'The AI investigation assistant is temporarily busy or reconnecting. Please ask again in a moment.'
+    });
+  }
+};
+app.post('/api/chat', handleChatProxy);
+app.post('/chat', handleChatProxy);
+
 // Routes
 app.post('/api/analyze', async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: 'url is required' });
 
+  let domain = 'unknown';
+  try {
+    domain = new URL(url).hostname;
+  } catch (e) {
+    return res.status(400).json({ error: 'Invalid URL format' });
+  }
+
   const reportId = uuidv4();
-  const domain = new URL(url).hostname;
-  
+  const contentType = detectContentType(url);
+
   const report = new Report({
     report_id: reportId,
     url,
     domain,
     status: 'queued',
-    content_type: detectContentType(url),
+    content_type: contentType,
     created_at: new Date().toISOString()
   });
 
   await report.save();
-  
-  // Dispatch to distributed Celery worker queue via Python AI service
-  try {
-    console.log(`[analyze] Dispatching ${reportId} to distributed Celery queue...`);
-    await axios.post(`${PYTHON_AI_URL}/pipeline/start`, { report_id: reportId, url }, { timeout: 3000 });
-  } catch (err) {
-    console.log(`[analyze] Celery dispatch failed (${err.message}), falling back to in-memory pipeline...`);
-    runPipeline(reportId, url);
+
+  // Dual Execution Engine:
+  // Dispatches to distributed Celery cluster when ENABLE_CELERY is active,
+  // or executes the high-throughput resilient pipeline directly.
+  if (process.env.ENABLE_CELERY === 'true') {
+    axios.post(`${PYTHON_AI_URL}/pipeline/start`, { report_id: reportId, url }, { timeout: 3000 })
+      .catch((err) => {
+        console.warn(`[analyze] Celery dispatch unavailable (${err.message}), running direct pipeline...`);
+        runPipeline(reportId, url).catch((e) => markFailed(reportId, e.message));
+      });
+  } else {
+    runPipeline(reportId, url).catch((e) => markFailed(reportId, e.message));
   }
 
   res.status(202).json({
@@ -143,13 +176,14 @@ app.post('/api/analyze-live', async (req, res) => {
 
   await report.save();
 
-  // Dispatch to distributed Celery worker queue via Python AI service
-  try {
-    console.log(`[analyze-live] Dispatching ${reportId} (video: ${videoId}) to Celery...`);
-    await axios.post(`${PYTHON_AI_URL}/pipeline/start`, { report_id: reportId, url }, { timeout: 4000 });
-  } catch (err) {
-    console.log(`[analyze-live] Celery dispatch failed (${err.message}), falling back to in-memory pipeline...`);
-    runPipeline(reportId, url);
+  if (process.env.ENABLE_CELERY === 'true') {
+    axios.post(`${PYTHON_AI_URL}/pipeline/start`, { report_id: reportId, url }, { timeout: 4000 })
+      .catch((err) => {
+        console.warn(`[analyze-live] Celery dispatch unavailable (${err.message}), running direct pipeline...`);
+        runPipeline(reportId, url).catch((e) => markFailed(reportId, e.message));
+      });
+  } else {
+    runPipeline(reportId, url).catch((e) => markFailed(reportId, e.message));
   }
 
   res.status(202).json({
@@ -163,43 +197,55 @@ app.post('/api/analyze-live', async (req, res) => {
 });
 
 app.get('/api/report/:id', async (req, res) => {
-  const report = await Report.findOne({ report_id: req.params.id }).lean();
-  if (!report) return res.status(404).json({ error: 'Report not found' });
-  
-  const chunks = await Chunk.find({ report_id: req.params.id }).lean();
-  res.json({ report, chunks });
+  try {
+    const report = await Report.findOne({ report_id: req.params.id }).lean();
+    if (!report) return res.status(404).json({ error: 'Report not found' });
+    
+    const chunks = await Chunk.find({ report_id: req.params.id }).lean();
+    res.json({ report, chunks });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch report: ' + err.message });
+  }
 });
 
 app.get('/api/reports', async (req, res) => {
-  const reports = await Report.find().sort({ created_at: -1 }).limit(100).lean();
-  res.json({ reports });
+  try {
+    const reports = await Report.find().sort({ created_at: -1 }).limit(100).lean();
+    res.json({ reports });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch reports: ' + err.message });
+  }
 });
 
 app.get('/api/trends', async (req, res) => {
-  const reports = await Report.find({ status: 'done' }).lean();
-  
-  const domainMap = {};
-  for (const r of reports) {
-    if (!domainMap[r.domain]) {
-      domainMap[r.domain] = { domain: r.domain, count: 0, scores: [], latest_url: r.url, latest_score: r.credibility_score };
+  try {
+    const reports = await Report.find({ status: 'done' }).lean();
+    
+    const domainMap = {};
+    for (const r of reports) {
+      if (!domainMap[r.domain]) {
+        domainMap[r.domain] = { domain: r.domain, count: 0, scores: [], latest_url: r.url, latest_score: r.credibility_score };
+      }
+      domainMap[r.domain].count++;
+      domainMap[r.domain].latest_url = r.url;
+      domainMap[r.domain].latest_score = r.credibility_score;
+      domainMap[r.domain].scores.push(r.credibility_score);
     }
-    domainMap[r.domain].count++;
-    domainMap[r.domain].latest_url = r.url;
-    domainMap[r.domain].latest_score = r.credibility_score;
-    domainMap[r.domain].scores.push(r.credibility_score);
+
+    let stats = Object.values(domainMap).map(d => {
+      const avg_score = d.scores.reduce((a, b) => a + b, 0) / d.scores.length;
+      return { ...d, avg_score, scores: undefined };
+    });
+
+    stats.sort((a, b) => b.count - a.count);
+    stats = stats.slice(0, 20);
+
+    const recent = reports.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 10);
+
+    res.json({ trending_domains: stats, recent_analyses: recent });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch trends: ' + err.message });
   }
-
-  let stats = Object.values(domainMap).map(d => {
-    const avg_score = d.scores.reduce((a, b) => a + b, 0) / d.scores.length;
-    return { ...d, avg_score, scores: undefined };
-  });
-
-  stats.sort((a, b) => b.count - a.count);
-  stats = stats.slice(0, 20);
-
-  const recent = reports.sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, 10);
-
-  res.json({ trending_domains: stats, recent_analyses: recent });
 });
 
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'trulylied-backend-node' }));

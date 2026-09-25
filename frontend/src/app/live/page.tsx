@@ -22,6 +22,8 @@ interface LiveChunk {
   date_context: string;
   start_time: number;
   end_time: number;
+  type?: string;
+  status?: string;
 }
 
 function formatTime(seconds: number) {
@@ -348,16 +350,18 @@ export default function LivePage() {
                 <div className="max-w-lg mx-auto space-y-5">
                   <div className="surface-panel p-6 flex flex-col items-center">
                     <p className="label-caps mb-5">Overall Credibility Score</p>
-                    <CredibilityGauge score={reportData.trust_score} />
+                    <CredibilityGauge score={reportData.credibility_score ?? 0} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="surface-panel p-5 flex flex-col items-center text-center">
                       <p className="label-caps mb-2">Claims Analysed</p>
-                      <p className="text-3xl font-[800] text-white">{reportData.total_claims}</p>
+                      <p className="text-3xl font-[800] text-white">{chunks.length}</p>
                     </div>
                     <div className="surface-panel p-5 flex flex-col items-center text-center">
                       <p className="label-caps mb-2">Claims Verified</p>
-                      <p className="text-3xl font-[800] text-white">{reportData.factual_claims}</p>
+                      <p className="text-3xl font-[800] text-white">
+                        {chunks.filter(c => Boolean(c.verdict && c.verdict !== "PENDING")).length}
+                      </p>
                     </div>
                   </div>
                   {reportData.summary && (

@@ -20,19 +20,26 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/trulylied")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-# Redis connection for Pub/Sub and caching
+# Redis connection singleton for Pub/Sub and caching
+_redis_client = None
 def get_redis_client():
-    return redis.from_url(REDIS_URL)
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = redis.from_url(REDIS_URL, decode_responses=False)
+    return _redis_client
 
-# MongoDB connection
+# MongoDB connection singleton
+_mongo_client = None
 def get_db():
-    client = MongoClient(MONGO_URI)
+    global _mongo_client
+    if _mongo_client is None:
+        _mongo_client = MongoClient(MONGO_URI, maxPoolSize=10)
     db_name = "trulylied"
     if "/" in MONGO_URI.replace("://", ""):
         extracted = MONGO_URI.split("/")[-1].split("?")[0]
         if extracted:
             db_name = extracted
-    return client[db_name]
+    return _mongo_client[db_name]
 
 def publish_ws_event(report_id: str, data: dict):
     """

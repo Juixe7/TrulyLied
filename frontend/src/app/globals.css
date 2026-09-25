@@ -209,6 +209,17 @@
   transform: translateY(-2px);
 }
 
+@keyframes tlShimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer-pulse {
+  background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(139,92,246,0.12) 50%, rgba(255,255,255,0.02) 75%);
+  background-size: 200% 100%;
+  animation: tlShimmer 2.2s infinite;
+}
+
 /* ─── Reduced motion ───────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {

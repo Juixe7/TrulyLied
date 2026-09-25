@@ -320,9 +320,10 @@ def call_hf_llm(prompt: str) -> str:
                 return response.choices[0].message.content
             except Exception as e:
                 import time
-                time.sleep(2)
+                time.sleep(1)
                 if attempt == 2:
-                    raise Exception(f"Groq Inference Error: {e}")
+                    print(f"[llm] Groq inference failed after 3 attempts: {e}. Falling through to HuggingFace...")
+                    break
                 continue
 
     if not HF_TOKEN:
@@ -607,7 +608,8 @@ Return ONLY JSON. [/INST]"""
             opinions=data.get("opinions", []),
             toxic_passages=data.get("toxic_passages", [])
         )
-    except Exception:
+    except Exception as e:
+        print(f"[decompose] LLM decompose failed: {e}. Falling back to sentence splitting heuristic.")
         sentences = re.split(r'[.!?]\s+', truncated)
         valid = [s.strip() + "." for s in sentences if len(s.strip()) > 40][:10]
         return DecomposedClaims(factual_claims=valid, opinions=[], toxic_passages=[])

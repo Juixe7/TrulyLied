@@ -161,7 +161,7 @@ def download_youtube_audio(url_or_id: str, max_duration_sec: int = 900) -> Optio
             url = url_or_id
 
         temp_dir = tempfile.gettempdir()
-        out_template = os.path.join(temp_dir, "trulylied_%(id)s.%(ext)s")
+        out_template = os.path.join(temp_dir, f"trulylied_{uuid.uuid4().hex[:6]}_%(id)s.%(ext)s")
 
         ydl_opts = {
             'format': 'bestaudio[ext=m4a]/bestaudio/best',
@@ -169,7 +169,7 @@ def download_youtube_audio(url_or_id: str, max_duration_sec: int = 900) -> Optio
             'quiet': True,
             'no_warnings': True,
             'noplaylist': True,
-            'max_filesize': 50 * 1024 * 1024, # 50 MB safety cap
+            'max_filesize': 24 * 1024 * 1024, # 24 MB safety cap to stay within Groq Whisper 25MB limit
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
