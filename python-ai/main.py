@@ -548,7 +548,7 @@ def extract_content(req: ExtractRequest):
             print(f"[extract] All transcript methods failed for {video_id}: {e}")
             raise HTTPException(
                 status_code=422,
-                detail=f"Could not extract spoken dialogue or captions from YouTube video ({video_id}). YouTube bot-protection or lack of subtitles prevented automated extraction. Please paste the transcript or key claims directly into TrulyLied."
+                detail=f"Could not extract spoken dialogue or captions from YouTube video ({video_id}). Error: {str(e)}"
             )
     else:
         # Try fetching with requests first using a real User-Agent
@@ -590,6 +590,32 @@ def extract_content(req: ExtractRequest):
         lang_hint = f" (Language detected: {lang})" if lang != "en" else ""
         return ExtractResponse(text=text, content_type="blog", domain=domain, title=title + lang_hint, author=author)
 
+@app.get("/debug/yt/{video_id}")
+def debug_yt_extraction(video_id: str):
+    import time
+    results = {}
+    
+    # Test 1: extract_subtitles_yt_dlp
+    t0 = time.time()
+    try:
+        from multimodal import extract_subtitles_yt_dlp
+        subs = extract_subtitles_yt_dlp(video_id)
+        results["yt_dlp"] = {"status": "success", "count": len(subs), "duration": round(time.time() - t0, 2)}
+    except Exception as e:
+        import traceback
+        results["yt_dlp"] = {"status": "error", "error": str(e), "traceback": traceback.format_exc(), "duration": round(time.time() - t0, 2)}
+
+    # Test 2: YTT
+    t0 = time.time()
+    try:
+        ytt_api = YouTubeTranscriptApi()
+        res = _fetch_with_ytt(ytt_api, video_id)
+        results["ytt"] = {"status": "success", "count": len(res), "duration": round(time.time() - t0, 2)}
+    except Exception as e:
+        import traceback
+        results["ytt"] = {"status": "error", "error": str(e), "traceback": traceback.format_exc(), "duration": round(time.time() - t0, 2)}
+
+    return results
 
 # ── Live Video Fact-Check: Timestamped Transcript ──────────────────────────────
 
