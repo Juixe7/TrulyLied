@@ -28,6 +28,7 @@ except Exception:
     CACHE_MISSES = None
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = "claim_cache"
 VECTOR_DIM = 384  # bge-small-en-v1.5 default dimension
 
@@ -70,7 +71,7 @@ def get_qdrant() -> QdrantClient:
 
     # ── Tier 1: Remote Qdrant Server ──
     try:
-        client = QdrantClient(url=QDRANT_URL, timeout=2)
+        client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY, timeout=3)
         client.get_collections()
         _qdrant_client = client
         logger.info(f"Connected to remote Qdrant server at {QDRANT_URL}")
