@@ -82,14 +82,49 @@ const STEPS = [
   { n: "04", title: "Get your report", desc: "Receive a credibility score, per-claim verdicts, citations, and AI reasoning — all in seconds." },
 ];
 
-/* ── Content type chips ──────────────────────────────────────── */
+/* ── Content type chips with vibrant interactive presets ───────── */
 const CONTENT_TYPES = [
-  { icon: <Globe className="w-3.5 h-3.5" />, label: "News Articles" },
-  { icon: <Globe className="w-3.5 h-3.5" />, label: "Blog Posts" },
-  { icon: <PlayCircle className="w-3.5 h-3.5" />, label: "YouTube Videos" },
-  { icon: <Radio className="w-3.5 h-3.5" />, label: "Opinion Pieces" },
-  { icon: <TrendingUp className="w-3.5 h-3.5" />, label: "Political Content" },
-  { icon: <ShieldCheck className="w-3.5 h-3.5" />, label: "Fact Claims" },
+  {
+    icon: <PlayCircle className="w-3.5 h-3.5" />,
+    label: "YouTube Videos",
+    color: "text-rose-400 bg-rose-500/10 border-rose-500/25 hover:bg-rose-500/20 hover:border-rose-400/50 hover:shadow-[0_0_15px_rgba(244,63,94,0.25)]",
+    dot: "bg-rose-500",
+    sampleUrl: "https://www.youtube.com/watch?v=5FHuonxmySs",
+  },
+  {
+    icon: <Globe className="w-3.5 h-3.5" />,
+    label: "News Articles",
+    color: "text-sky-400 bg-sky-500/10 border-sky-500/25 hover:bg-sky-500/20 hover:border-sky-400/50 hover:shadow-[0_0_15px_rgba(56,189,248,0.25)]",
+    dot: "bg-sky-500",
+    sampleUrl: "https://www.bbc.com/news/technology-68541234",
+  },
+  {
+    icon: <TrendingUp className="w-3.5 h-3.5" />,
+    label: "Political Debates",
+    color: "text-amber-400 bg-amber-500/10 border-amber-500/25 hover:bg-amber-500/20 hover:border-amber-400/50 hover:shadow-[0_0_15px_rgba(251,191,36,0.25)]",
+    dot: "bg-amber-500",
+    sampleUrl: "https://apnews.com/hub/fact-checking",
+  },
+  {
+    icon: <Radio className="w-3.5 h-3.5" />,
+    label: "Social Threads / X",
+    color: "text-violet-400 bg-violet-500/10 border-violet-500/25 hover:bg-violet-500/20 hover:border-violet-400/50 hover:shadow-[0_0_15px_rgba(139,92,246,0.25)]",
+    dot: "bg-violet-500",
+    sampleUrl: "https://x.com/OpenAI/status/17892348912",
+  },
+  {
+    icon: <ShieldCheck className="w-3.5 h-3.5" />,
+    label: "Science Claims",
+    color: "text-emerald-400 bg-emerald-500/10 border-emerald-500/25 hover:bg-emerald-500/20 hover:border-emerald-400/50 hover:shadow-[0_0_15px_rgba(16,185,129,0.25)]",
+    dot: "bg-emerald-500",
+    sampleUrl: "https://www.nature.com/articles/d41586-024-00123-x",
+  },
+];
+
+const DEMO_SAMPLES = [
+  { label: "🎬 Veritasium Climate Video", url: "https://www.youtube.com/watch?v=5FHuonxmySs" },
+  { label: "📰 BBC AI Report", url: "https://www.bbc.com/news/technology-68541234" },
+  { label: "🔬 Clean Energy Study", url: "https://www.nature.com/articles/d41586-024-00123-x" },
 ];
 
 /* ── Verdict preview cards (decorative) ─────────────────────── */
@@ -126,86 +161,145 @@ export default function LandingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#080808] overflow-x-hidden">
+    <div className="min-h-screen bg-[#080808] overflow-x-hidden relative">
       <Navbar />
+
+      {/* Dynamic atmospheric ambient background glows */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-0 left-1/4 -translate-x-1/2 w-[650px] h-[500px] opacity-[0.14] rounded-full blur-[130px]"
+        style={{ background: "radial-gradient(circle, #7c3aed 0%, transparent 70%)" }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute top-12 right-1/4 translate-x-1/2 w-[550px] h-[450px] opacity-[0.10] rounded-full blur-[140px]"
+        style={{ background: "radial-gradient(circle, #4f46e5 0%, transparent 70%)" }}
+      />
 
       {/* ══════════════════════════════════════════════════
           HERO
       ══════════════════════════════════════════════════ */}
-      <section className="relative px-5 pt-24 pb-32 max-w-6xl mx-auto">
-
-        {/* Subtle radial glow — purely decorative */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute top-0 left-1/2 -translate-x-1/2 w-[900px] h-[600px] opacity-[0.07]"
-          style={{ background: "radial-gradient(ellipse at center top, #7c3aed, transparent 70%)" }}
-        />
-
+      <section className="relative px-5 pt-20 pb-28 max-w-6xl mx-auto">
         <motion.div
-          initial={{ opacity: 0, y: 32 }}
+          initial={{ opacity: 0, y: 28 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.65, ease: [0.22, 1, 0.36, 1] }}
           className="relative z-10"
         >
-          {/* Top badge */}
-          <div className="inline-flex items-center gap-2 px-3 py-1 mb-8 rounded-md bg-white/5 border border-white/8 text-[12px] font-[500] text-zinc-400">
+          {/* Top pill badge */}
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 mb-8 rounded-full bg-violet-500/10 border border-violet-500/25 text-[12px] font-[550] text-violet-300 shadow-[0_0_20px_rgba(124,58,237,0.2)]">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-            Self-Corrective CRAG Fact-Checking
-            <span className="text-zinc-700">·</span>
-            <span className="text-violet-400">Powered by Groq</span>
+            Self-Corrective Multi-Agent DAG Fact-Checking
+            <span className="text-zinc-600">·</span>
+            <span className="text-emerald-400">Groq Whisper + Gemini VLM</span>
           </div>
 
           {/* Headline */}
-          <h1 className="mb-6 max-w-4xl font-[800] tracking-[-0.03em] leading-[1.1] text-white" style={{ fontSize: "clamp(1.625rem, 3.2vw, 2.5rem)" }}>
+          <h1 className="mb-6 max-w-4xl font-[800] tracking-[-0.035em] leading-[1.08] text-white" style={{ fontSize: "clamp(2rem, 3.8vw, 3.25rem)" }}>
             Stop believing.<br />
             Start <span className="gradient-text">verifying.</span>
           </h1>
 
           {/* Sub-headline */}
-          <p className="text-[1.125rem] leading-relaxed text-zinc-400 max-w-2xl mb-10 font-[400]">
-            TrulyLied uses AI to dissect every factual claim in any article, blog, or YouTube video — 
-            validating each one against live web evidence in real-time. Know what's true before you share it.
+          <p className="text-[1.125rem] leading-relaxed text-zinc-400 max-w-2xl mb-8 font-[400]">
+            TrulyLied deploys a 4-stage distributed multi-agent DAG to dissect claims across news articles, blogs, and YouTube videos — verifying evidence against live web indices with sub-second hybrid retrieval.
           </p>
 
-          {/* Content type chips */}
-          <div className="flex flex-wrap gap-2 mb-10">
-            {CONTENT_TYPES.map(({ icon, label }) => (
-              <span key={label} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/4 border border-white/7 text-[12px] text-zinc-500 font-[500]">
-                {icon} {label}
-              </span>
-            ))}
+          {/* Content type chips - Vibrant & Clickable */}
+          <div className="mb-8">
+            <p className="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold mb-3">
+              Supported Media Formats — Click to load sample
+            </p>
+            <div className="flex flex-wrap gap-2.5">
+              {CONTENT_TYPES.map(({ icon, label, color, dot, sampleUrl }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setUrl(sampleUrl)}
+                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-[12px] font-[550] transition-all duration-200 cursor-pointer ${color}`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${dot} animate-pulse`} />
+                  {icon}
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          {/* Search form */}
+          {/* Search form with glowing border */}
           <form onSubmit={handleAnalyze} className="w-full max-w-2xl">
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center bg-transparent sm:bg-[#111] border-0 sm:border border-white/9 rounded-xl p-0 sm:p-1.5 focus-within:border-white/18 transition-colors gap-2 sm:gap-0">
-              <div className="flex-1 flex items-center bg-[#111] sm:bg-transparent border border-white/9 sm:border-0 rounded-xl sm:rounded-none px-3 py-2.5 sm:p-0">
-                <Search className="w-4 h-4 text-zinc-600 shrink-0" />
-                <input
-                  type="url"
-                  required
-                  placeholder="Paste a URL — news, YouTube, blogs…"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  className="flex-1 bg-transparent text-[14px] text-zinc-200 placeholder:text-zinc-600 px-3 outline-none min-w-0"
-                />
+            <div className="relative group p-[1.5px] rounded-2xl bg-gradient-to-r from-violet-500/35 via-fuchsia-500/25 to-indigo-500/35 hover:from-violet-500/50 hover:to-indigo-500/50 focus-within:from-violet-500 focus-within:to-indigo-500 transition-all duration-300 shadow-[0_0_35px_-5px_rgba(124,58,237,0.22)] focus-within:shadow-[0_0_45px_rgba(124,58,237,0.4)]">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center bg-[#0d0d12]/95 backdrop-blur-xl rounded-[15px] p-2 transition-colors gap-2 sm:gap-0">
+                <div className="flex-1 flex items-center px-3 py-2 sm:py-1">
+                  <Search className="w-4 h-4 text-violet-400 shrink-0 mr-3" />
+                  <input
+                    type="url"
+                    required
+                    placeholder="Paste URL — YouTube video, news article, blog, or press release…"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    className="flex-1 bg-transparent text-[14.5px] text-zinc-100 placeholder:text-zinc-500 outline-none min-w-0 font-normal"
+                  />
+                  {url && (
+                    <button
+                      type="button"
+                      onClick={() => setUrl("")}
+                      className="text-zinc-500 hover:text-zinc-300 text-xs px-2 py-1 mr-1"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading || !url}
+                  className="flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[13.5px] font-[650] px-6 py-3 rounded-xl shadow-lg shadow-violet-600/30 hover:shadow-violet-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:hover:scale-100 shrink-0 w-full sm:w-auto"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Analyzing...
+                    </>
+                  ) : (
+                    <>
+                      Analyze <ArrowRight className="w-4 h-4" />
+                    </>
+                  )}
+                </button>
               </div>
-              <button
-                type="submit"
-                disabled={loading || !url}
-                className="flex items-center justify-center gap-2 bg-white text-black text-[13px] font-[650] px-5 py-3 sm:py-2.5 rounded-xl sm:rounded-[9px] hover:bg-zinc-100 transition-colors disabled:opacity-40 shrink-0 w-full sm:w-auto"
-              >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <>Analyze <ArrowRight className="w-4 h-4" /></>}
-              </button>
             </div>
-            {error && <p className="mt-3 text-[13px] text-red-400">{error}</p>}
+
+            {/* Quick Demo Samples Bar */}
+            <div className="flex items-center flex-wrap gap-2 mt-3.5 text-xs">
+              <span className="text-zinc-500 flex items-center gap-1 font-medium text-[11.5px]">
+                ⚡ Quick sample test:
+              </span>
+              {DEMO_SAMPLES.map((s) => (
+                <button
+                  key={s.label}
+                  type="button"
+                  onClick={() => setUrl(s.url)}
+                  className="px-2.5 py-1 rounded-lg bg-white/[0.05] hover:bg-violet-500/15 border border-white/8 hover:border-violet-500/35 text-zinc-400 hover:text-violet-300 transition-all cursor-pointer text-[11.5px]"
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+
+            {error && <p className="mt-3 text-[13px] text-red-400 font-medium">{error}</p>}
           </form>
 
-          {/* Trust hints */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-6 text-[12px] text-zinc-600">
-            <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Free to use</span>
-            <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> No sign-up required</span>
-            <span className="flex items-center gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Results in seconds</span>
+          {/* Trust hints with modern badges */}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-7 text-[12px]">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-medium">
+              <CheckCircle2 className="w-3.5 h-3.5" /> 100% Free to use
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-violet-500/10 border border-violet-500/20 text-violet-300 font-medium">
+              <ShieldCheck className="w-3.5 h-3.5" /> No sign-up required
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-sky-500/10 border border-sky-500/20 text-sky-300 font-medium">
+              <Activity className="w-3.5 h-3.5" /> Sub-second Qdrant Cache
+            </span>
           </div>
         </motion.div>
       </section>

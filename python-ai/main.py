@@ -141,67 +141,29 @@ def get_free_proxies() -> List[str]:
 
 def get_youtube_transcript(video_id: str) -> List[dict]:
     """
-    Master transcript fetcher with layered fallbacks:
-    1. youtube-transcript-api with free rotating proxies
-    2. youtube-transcript-api with custom PROXY_URL (if set)
-    3. youtube-transcript-api direct (may be blocked on cloud IPs)
+    Master transcript fetcher with layered, high-speed fallbacks:
+    1. Direct YouTube Transcript API (fastest, 2-3s)
+    2. Groq Whisper LPU Audio Fallback via yt-dlp (bypasses all caption restrictions)
+    3. Custom Proxy (if PROXY_URL configured)
     Returns list of {text, start, duration} dicts.
     """
     errors = []
-    
-    # ── Attempt 1: Custom Proxy (if PROXY_URL is set) ──
-    proxy_url = os.getenv("PROXY_URL")
-    if proxy_url:
-        try:
-            print(f"[transcript] Trying custom proxy for {video_id}")
-            from youtube_transcript_api.proxies import GenericProxyConfig
-            ytt_api = YouTubeTranscriptApi(
-                proxy_config=GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
-            )
-            return _fetch_with_ytt(ytt_api, video_id)
-        except Exception as e:
-            errors.append(f"Custom proxy: {e}")
 
-    # ── Attempt 2: Free Rotating Proxies ──
+    # ── Attempt 1: Direct Connection (Fastest Path) ──
     try:
-        import random
-        from youtube_transcript_api.proxies import GenericProxyConfig
-        
-        proxies = get_free_proxies()
-        if proxies:
-            # Pick a few random proxies to try
-            sampled_proxies = random.sample(proxies, min(8, len(proxies)))
-            for proxy in sampled_proxies:
-                try:
-                    print(f"[transcript] Trying free proxy {proxy} for {video_id}")
-                    ytt_api = YouTubeTranscriptApi(
-                        proxy_config=GenericProxyConfig(http_url=proxy, https_url=proxy)
-                    )
-                    result = _fetch_with_ytt(ytt_api, video_id)
-                    print(f"[transcript] Free proxy success: {len(result)} segments")
-                    return result
-                except Exception as e:
-                    # Ignore proxy failures, just try the next one
-                    continue
-            errors.append("All free proxies failed.")
-        else:
-            errors.append("No free proxies available.")
-    except Exception as e:
-        errors.append(f"Free proxy setup failed: {e}")
-
-    # ── Attempt 3: Direct (may fail on cloud IPs) ──
-    try:
-        print(f"[transcript] Trying direct connection for {video_id}")
+        print(f"[transcript] Attempting direct connection for video {video_id}...")
         ytt_api = YouTubeTranscriptApi()
         result = _fetch_with_ytt(ytt_api, video_id)
-        print(f"[transcript] Direct connection success: {len(result)} segments")
-        return result
+        if result and len(result) > 0:
+            print(f"[transcript] Direct connection succeeded: {len(result)} segments retrieved.")
+            return result
     except Exception as e:
+        print(f"[transcript] Direct connection unavailable ({e}). Engaging audio pipeline...")
         errors.append(f"Direct connection: {e}")
 
-    # ── Attempt 4: Groq Whisper LPU Audio Fallback (via yt-dlp) ──
+    # ── Attempt 2: Groq Whisper LPU Audio Fallback (via yt-dlp) ──
     try:
-        print(f"[transcript] Subtitle tracks unavailable for {video_id}. Engaging Groq Whisper LPU audio fallback...")
+        print(f"[transcript] Engaging Groq Whisper LPU audio extraction for {video_id}...")
         from multimodal import transcribe_youtube_audio_fallback
         whisper_segments = transcribe_youtube_audio_fallback(video_id)
         if whisper_segments and len(whisper_segments) > 0:
@@ -210,7 +172,23 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
         else:
             errors.append("Groq Whisper produced empty transcript.")
     except Exception as e:
-        errors.append(f"Groq Whisper audio fallback failed: {e}")
+        print(f"[transcript] Groq Whisper audio fallback failed: {e}")
+        errors.append(f"Groq Whisper audio fallback: {e}")
+
+    # ── Attempt 3: Custom Proxy (if configured) ──
+    proxy_url = os.getenv("PROXY_URL")
+    if proxy_url:
+        try:
+            print(f"[transcript] Trying custom proxy for {video_id}...")
+            from youtube_transcript_api.proxies import GenericProxyConfig
+            ytt_api = YouTubeTranscriptApi(
+                proxy_config=GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
+            )
+            result = _fetch_with_ytt(ytt_api, video_id)
+            if result:
+                return result
+        except Exception as e:
+            errors.append(f"Custom proxy: {e}")
 
     error_summary = " | ".join(errors)
     raise Exception(f"Failed to fetch YouTube transcript. Methods tried: {error_summary}")

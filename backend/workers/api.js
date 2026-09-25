@@ -3,7 +3,7 @@ const axios = require('axios');
 const PYTHON_AI_URL = process.env.PYTHON_AI_URL || 'http://localhost:8000';
 
 async function extract(url) {
-  const res = await axios.post(`${PYTHON_AI_URL}/extract`, { url });
+  const res = await axios.post(`${PYTHON_AI_URL}/extract`, { url }, { timeout: 60000 });
   return res.data;
 }
 

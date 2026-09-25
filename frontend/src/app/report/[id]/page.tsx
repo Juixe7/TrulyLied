@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState, use } from "react";
+import { useRouter } from "next/navigation";
 import { API_URL, WS_URL } from "@/lib/config";
 import {
   CheckCircle2, XCircle, AlertTriangle, HelpCircle, Loader2,
   Link as LinkIcon, HeartPulse, Quote, AlertOctagon, ShieldCheck,
   Copy, Check, Clock, Ban, BadgeCheck, ExternalLink, X,
+  RotateCcw, Play, Sparkles,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import CredibilityGauge from "@/components/CredibilityGauge";
@@ -13,12 +15,34 @@ import Navbar from "@/components/Navbar";
 
 export default function ReportPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
+  const router = useRouter();
   const [reportData, setReportData] = useState<any>(null);
   const [chunks, setChunks] = useState<any[]>([]);
   const [status, setStatus] = useState("connecting");
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [copied, setCopied] = useState(false);
   const [selectedClaim, setSelectedClaim] = useState<any>(null);
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async () => {
+    if (!reportData?.url) return;
+    setRetrying(true);
+    try {
+      const res = await fetch(`${API_URL}/api/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: reportData.url }),
+      });
+      const data = await res.json();
+      if (data.report_id) {
+        router.push(`/report/${data.report_id}`);
+      }
+    } catch (e) {
+      console.error("Retry failed:", e);
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   useEffect(() => {
     fetch(`${API_URL}/api/report/${resolvedParams.id}`)
@@ -140,7 +164,11 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 mb-3 flex-wrap">
                 <h1 className="heading-lg text-white">Analysis Report</h1>
-                {status !== "done" ? (
+                {status === "failed" ? (
+                  <span className="badge badge-pill bg-red-500/15 text-red-400 border border-red-500/30">
+                    <XCircle className="w-3 h-3" /> Failed
+                  </span>
+                ) : status !== "done" ? (
                   <span className="badge badge-pill bg-blue-500/12 text-blue-400 border border-blue-500/20">
                     <Loader2 className="w-3 h-3 animate-spin" />
                     {statusLabel[status] || status}
@@ -210,6 +238,74 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             </AnimatePresence>
           </div>
         </header>
+
+        {/* Error Recovery Card */}
+        {status === "failed" && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="p-6 rounded-2xl bg-gradient-to-r from-red-500/[0.09] via-rose-500/[0.05] to-zinc-900 border border-red-500/25 shadow-lg shadow-red-500/5 space-y-4"
+          >
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl bg-red-500/15 border border-red-500/30 flex items-center justify-center shrink-0">
+                <AlertOctagon className="w-5 h-5 text-red-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-white font-semibold text-base">Extraction Interrupted</h3>
+                <p className="text-[13.5px] text-zinc-300 mt-1 leading-relaxed">
+                  {reportData?.error_msg || "The content extraction or transcript service experienced a temporary network timeout."}
+                </p>
+                <p className="text-[12px] text-zinc-400 mt-2 flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                  TrulyLied's Groq Whisper LPU audio pipeline can bypass caption blocks and transcribe the audio directly.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center flex-wrap gap-3 pt-2">
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white font-semibold text-xs transition-all shadow-lg shadow-red-500/20 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {retrying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                Retry Analysis Now
+              </button>
+              <a
+                href="/"
+                className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300 text-xs transition-all"
+              >
+                Analyze Different URL
+              </a>
+            </div>
+          </motion.div>
+        )}
+
+        {/* YouTube Video Player Embed */}
+        {reportData?.content_type === "youtube" && (() => {
+          const match = reportData.url?.match(/(?:v=|youtu\.be\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+          const videoId = match ? match[1] : null;
+          if (!videoId) return null;
+          return (
+            <div className="surface-panel p-5 rounded-2xl overflow-hidden space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs uppercase tracking-wider font-semibold text-zinc-400 flex items-center gap-1.5">
+                  <Play className="w-3.5 h-3.5 text-rose-400" /> Source YouTube Video
+                </span>
+                <span className="text-[11px] text-zinc-500">ID: {videoId}</span>
+              </div>
+              <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black/60 border border-white/8 shadow-2xl">
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0`}
+                  title="YouTube video player"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                  className="w-full h-full border-0"
+                />
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Progress bar */}
         {status === "processing" && progress.total > 0 && (

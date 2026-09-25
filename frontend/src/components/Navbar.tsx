@@ -14,14 +14,19 @@ export default function Navbar() {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-[rgba(255,255,255,0.06)] bg-[#080808]">
-      <nav className="mx-auto flex h-12 max-w-6xl items-center justify-between px-5">
-        {/* Wordmark */}
+    <header className="sticky top-0 z-40 w-full border-b border-white/[0.07] bg-[#080808]/85 backdrop-blur-xl transition-all">
+      <nav className="mx-auto flex h-14 max-w-6xl items-center justify-between px-5">
+        {/* Brand Wordmark with sleek emblem */}
         <a
           href="/"
-          className="text-[20px] font-[800] tracking-[-0.04em] text-white hover:text-zinc-300 transition-colors"
+          className="flex items-center gap-2.5 group transition-all"
         >
-          TrulyLied
+          <span className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 via-indigo-600 to-purple-600 flex items-center justify-center text-white text-xs font-black shadow-md shadow-violet-500/25 group-hover:scale-105 transition-transform">
+            TL
+          </span>
+          <span className="text-[18px] font-[800] tracking-[-0.035em] text-white group-hover:text-zinc-200 transition-colors">
+            Truly<span className="text-violet-400">Lied</span>
+          </span>
         </a>
 
         {/* Links */}
