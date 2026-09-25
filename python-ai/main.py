@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import concurrent.futures
 from urllib.parse import urlparse
 import requests
 from fastapi import FastAPI, HTTPException, Response
@@ -141,12 +142,17 @@ def get_free_proxies() -> List[str]:
         
     return _PROXY_CACHE
 
+def run_with_timeout(func, args=(), timeout=8):
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(func, *args)
+        return future.result(timeout=timeout)
+
 def get_youtube_transcript(video_id: str) -> List[dict]:
     """
-    Master transcript fetcher with layered, high-speed fallbacks:
+    Master transcript fetcher with layered, bounded-timeout fallbacks:
     1. Direct Subtitle Extraction via yt-dlp (fastest, mobile player client spoofing, bypasses cloud IP blocks)
-    2. Direct YouTube Transcript API (if unblocked)
-    3. Groq Whisper LPU Audio Fallback via yt-dlp (for videos without captions)
+    2. Direct YouTube Transcript API (if unblocked, max 6s timeout)
+    3. Groq Whisper LPU Audio Fallback via yt-dlp (for videos without captions, max 14s timeout)
     4. Custom Proxy (if PROXY_URL configured)
     Returns list of {text, start, duration} dicts.
     """
@@ -154,9 +160,9 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
 
     # ── Attempt 1: Direct Subtitle Extraction via yt-dlp (Bypasses Datacenter IP restrictions) ──
     try:
-        print(f"[transcript] Attempting yt-dlp direct subtitle extraction for {video_id}...")
+        print(f"[transcript] Attempting yt-dlp direct subtitle extraction for {video_id} (max 8s)...")
         from multimodal import extract_subtitles_yt_dlp
-        sub_segments = extract_subtitles_yt_dlp(video_id)
+        sub_segments = run_with_timeout(extract_subtitles_yt_dlp, (video_id,), timeout=8)
         if sub_segments and len(sub_segments) > 0:
             print(f"[transcript] yt-dlp subtitle extraction succeeded: {len(sub_segments)} segments retrieved.")
             return sub_segments
@@ -164,11 +170,11 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
         print(f"[transcript] yt-dlp direct subtitle extraction failed ({e}). Proceeding to next fallback...")
         errors.append(f"yt-dlp subtitles: {e}")
 
-    # ── Attempt 2: Direct Connection via YouTubeTranscriptApi ──
+    # ── Attempt 2: Direct Connection via YouTubeTranscriptApi (Strict 6s cap) ──
     try:
-        print(f"[transcript] Attempting direct connection for video {video_id}...")
+        print(f"[transcript] Attempting direct connection for video {video_id} (max 6s)...")
         ytt_api = YouTubeTranscriptApi()
-        result = _fetch_with_ytt(ytt_api, video_id)
+        result = run_with_timeout(_fetch_with_ytt, (ytt_api, video_id), timeout=6)
         if result and len(result) > 0:
             print(f"[transcript] Direct connection succeeded: {len(result)} segments retrieved.")
             return result
@@ -176,11 +182,11 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
         print(f"[transcript] Direct connection unavailable ({e}). Engaging audio pipeline...")
         errors.append(f"Direct connection: {e}")
 
-    # ── Attempt 2: Groq Whisper LPU Audio Fallback (via yt-dlp) ──
+    # ── Attempt 3: Groq Whisper LPU Audio Fallback (via yt-dlp, max 14s cap) ──
     try:
-        print(f"[transcript] Engaging Groq Whisper LPU audio extraction for {video_id}...")
+        print(f"[transcript] Engaging Groq Whisper LPU audio extraction for {video_id} (max 14s)...")
         from multimodal import transcribe_youtube_audio_fallback
-        whisper_segments = transcribe_youtube_audio_fallback(video_id)
+        whisper_segments = run_with_timeout(transcribe_youtube_audio_fallback, (video_id,), timeout=14)
         if whisper_segments and len(whisper_segments) > 0:
             print(f"[transcript] Groq Whisper fallback success: {len(whisper_segments)} segments transcribed with timestamps!")
             return whisper_segments
@@ -190,7 +196,7 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
         print(f"[transcript] Groq Whisper audio fallback failed: {e}")
         errors.append(f"Groq Whisper audio fallback: {e}")
 
-    # ── Attempt 3: Custom Proxy (if configured) ──
+    # ── Attempt 4: Custom Proxy (if configured) ──
     proxy_url = os.getenv("PROXY_URL")
     if proxy_url:
         try:
@@ -199,7 +205,7 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
             ytt_api = YouTubeTranscriptApi(
                 proxy_config=GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
             )
-            result = _fetch_with_ytt(ytt_api, video_id)
+            result = run_with_timeout(_fetch_with_ytt, (ytt_api, video_id), timeout=6)
             if result:
                 return result
         except Exception as e:

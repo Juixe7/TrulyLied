@@ -25,6 +25,18 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
   const [selectedClaim, setSelectedClaim] = useState<any>(null);
   const [retrying, setRetrying] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  const statusRef = useRef(status);
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    if (status === "done" || status === "failed") return;
+    const timer = setInterval(() => setElapsedSec(s => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [status]);
 
   // ── Interactive AI Investigation Chat State ──
   const [chatQuery, setChatQuery] = useState("");
@@ -99,90 +111,115 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     let ws: WebSocket | null = null;
     let reconnectTimeout: any = null;
 
-    const connect = () => {
-      fetch(`${API_URL}/api/report/${resolvedParams.id}`)
-        .then(res => res.json())
-        .then(data => {
-          if (!isMounted) return;
-          if (data.report) setReportData(data.report);
-          if (data.chunks) setChunks(data.chunks);
-          if (data.report?.status === "done" || data.report?.status === "completed_with_warnings") setStatus("done");
-          else setStatus(data.report?.status || "processing");
-        })
-        .catch(console.error);
-
-      ws = new WebSocket(`${WS_URL}/ws/report/${resolvedParams.id}`);
-      ws.onopen = () => console.log("[ws] Connected to TrulyLied telemetry stream");
-      
-      ws.onmessage = (event) => {
+    const pollReport = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/report/${resolvedParams.id}`);
+        if (!res.ok) return;
+        const data = await res.json();
         if (!isMounted) return;
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.status === "sync_state") {
-            if (msg.report) setReportData(msg.report);
-            if (msg.chunks && msg.chunks.length > 0) {
-              setChunks(msg.chunks);
-            }
-            if (msg.total_chunks) {
-              setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
-            }
-            if (msg.report?.status === "done" || msg.report?.status === "completed_with_warnings") {
-              setStatus("done");
-            } else if (msg.report?.status) {
-              setStatus(msg.report.status);
-            }
-          } else if (msg.status === "extracted") {
-            setStatus("extracted");
-            setReportData((prev: any) => ({ ...prev, ...(msg.title && { title: msg.title }), ...(msg.domain && { domain: msg.domain }) }));
-          } else if (msg.status === "decomposed") {
-            setStatus("decomposed");
-            if (msg.total_chunks) setProgress(p => ({ ...p, total: msg.total_chunks }));
-          } else if (msg.status === "chunk_pending" && msg.chunk) {
-            setChunks(prev => {
-              if (prev.some(c => c.chunk_id === msg.chunk.chunk_id)) return prev;
-              return [...prev, { ...msg.chunk, status: "pending" }];
-            });
-          } else if (msg.status === "chunk_done" && msg.chunk) {
-            if (msg.total_chunks) {
-              setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
-              setStatus("processing");
-            }
-            setChunks(prev => {
-              const exists = prev.find(c => c.chunk_id === msg.chunk.chunk_id);
-              if (exists) return prev.map(c => c.chunk_id === msg.chunk.chunk_id ? msg.chunk : c);
-              return [...prev, msg.chunk];
-            });
-          } else if (msg.status === "error") {
-            setStatus("failed");
-            setReportData((prev: any) => ({ ...prev, status: "failed", error_msg: msg.error }));
-          } else if (msg.status === "report_done") {
+        if (data.report) {
+          setReportData(data.report);
+          const rStatus = data.report.status;
+          if (rStatus === "done" || rStatus === "completed_with_warnings") {
             setStatus("done");
-            fetch(`${API_URL}/api/report/${resolvedParams.id}`)
-              .then(res => res.json())
-              .then(data => {
-                if (!isMounted) return;
-                if (data.report) setReportData(data.report);
-                if (data.chunks) setChunks(data.chunks);
-              });
+          } else if (rStatus === "failed") {
+            setStatus("failed");
+          } else if (rStatus) {
+            setStatus(rStatus);
           }
-        } catch (err) {
-          console.error("[ws] Frame parse error:", err);
         }
-      };
-
-      ws.onclose = () => {
-        if (!isMounted) return;
-        console.log("[ws] Stream closed");
-        if (status !== "done" && status !== "failed") {
-          reconnectTimeout = setTimeout(connect, 3000);
+        if (data.chunks && data.chunks.length > 0) {
+          setChunks(data.chunks);
+          const completed = data.chunks.filter((c: any) => Boolean(c.verdict || c.sentiment)).length;
+          setProgress({ completed, total: data.chunks.length });
         }
-      };
+      } catch (err) {
+        // silent polling catch
+      }
     };
 
-    connect();
+    // Immediate initial fetch
+    pollReport();
+
+    // Active 2.5s HTTP poll fallback ensures the UI never gets stranded on QUEUED
+    const pollInterval = setInterval(() => {
+      if (statusRef.current !== "done" && statusRef.current !== "failed") {
+        pollReport();
+      }
+    }, 2500);
+
+    const connectWs = () => {
+      try {
+        ws = new WebSocket(`${WS_URL}/ws/report/${resolvedParams.id}`);
+        ws.onopen = () => console.log("[ws] Connected to TrulyLied telemetry stream");
+        
+        ws.onmessage = (event) => {
+          if (!isMounted) return;
+          try {
+            const msg = JSON.parse(event.data);
+            if (msg.status === "sync_state") {
+              if (msg.report) setReportData(msg.report);
+              if (msg.chunks && msg.chunks.length > 0) {
+                setChunks(msg.chunks);
+              }
+              if (msg.total_chunks) {
+                setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
+              }
+              if (msg.report?.status === "done" || msg.report?.status === "completed_with_warnings") {
+                setStatus("done");
+              } else if (msg.report?.status) {
+                setStatus(msg.report.status);
+              }
+            } else if (msg.status === "extracted") {
+              setStatus("extracted");
+              setReportData((prev: any) => ({ ...prev, ...(msg.title && { title: msg.title }), ...(msg.domain && { domain: msg.domain }) }));
+            } else if (msg.status === "decomposed") {
+              setStatus("decomposed");
+              if (msg.total_chunks) setProgress(p => ({ ...p, total: msg.total_chunks }));
+            } else if (msg.status === "chunk_pending" && msg.chunk) {
+              setChunks(prev => {
+                if (prev.some(c => c.chunk_id === msg.chunk.chunk_id)) return prev;
+                return [...prev, { ...msg.chunk, status: "pending" }];
+              });
+            } else if (msg.status === "chunk_done" && msg.chunk) {
+              if (msg.total_chunks) {
+                setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
+                setStatus("processing");
+              }
+              setChunks(prev => {
+                const exists = prev.find(c => c.chunk_id === msg.chunk.chunk_id);
+                if (exists) return prev.map(c => c.chunk_id === msg.chunk.chunk_id ? msg.chunk : c);
+                return [...prev, msg.chunk];
+              });
+            } else if (msg.status === "error") {
+              setStatus("failed");
+              setReportData((prev: any) => ({ ...prev, status: "failed", error_msg: msg.error }));
+            } else if (msg.status === "report_done") {
+              setStatus("done");
+              pollReport();
+            }
+          } catch (err) {
+            console.error("[ws] Frame parse error:", err);
+          }
+        };
+
+        ws.onclose = () => {
+          if (!isMounted) return;
+          console.log("[ws] Stream closed");
+          if (statusRef.current !== "done" && statusRef.current !== "failed") {
+            reconnectTimeout = setTimeout(connectWs, 3500);
+          }
+        };
+      } catch (err) {
+        console.warn("[ws] Connection init error:", err);
+      }
+    };
+
+    connectWs();
 
     return () => {
       isMounted = false;
+      clearInterval(pollInterval);
       if (ws) ws.close();
       if (reconnectTimeout) clearTimeout(reconnectTimeout);
     };
@@ -310,12 +347,12 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             </div>
 
             <AnimatePresence>
-              {status === "done" && reportData && (
+              {status === "done" && reportData ? (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.85 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                  className="flex flex-col items-center gap-3"
+                  className="flex flex-col items-center gap-3 shrink-0"
                 >
                   <CredibilityGauge score={reportData.credibility_score ?? 0} size={190} />
                   <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-[12px] text-zinc-500">
@@ -332,7 +369,62 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                     </span>
                   </div>
                 </motion.div>
-              )}
+              ) : status !== "failed" ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="w-full md:w-[360px] p-4.5 rounded-2xl bg-white/[0.03] border border-violet-500/25 shadow-xl shadow-violet-500/5 space-y-3.5 shrink-0"
+                >
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2 font-semibold text-white">
+                      <span className="relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500"></span>
+                      </span>
+                      Live Multi-Agent Pipeline
+                    </div>
+                    <span className="text-[11px] font-mono text-violet-300 bg-violet-500/10 px-2 py-0.5 rounded-full border border-violet-500/20">
+                      ⏱ {elapsedSec}s elapsed
+                    </span>
+                  </div>
+
+                  {/* 4 Step Progress Bars */}
+                  <div className="grid grid-cols-4 gap-1.5 pt-1">
+                    {[
+                      { label: "1. Ingest", active: true, done: ["extracted", "decomposed", "processing"].includes(status) },
+                      { label: "2. Claims", active: ["extracted", "decomposed", "processing"].includes(status), done: ["decomposed", "processing"].includes(status) },
+                      { label: "3. Verify", active: ["decomposed", "processing"].includes(status), done: progress.completed > 0 && progress.completed === progress.total },
+                      { label: "4. Score", active: false, done: false }
+                    ].map((step, idx) => (
+                      <div key={idx} className="space-y-1">
+                        <div className={`h-1.5 rounded-full transition-all duration-500 ${
+                          step.done
+                            ? "bg-emerald-500"
+                            : step.active
+                            ? "bg-violet-500 animate-pulse"
+                            : "bg-white/10"
+                        }`} />
+                        <p className={`text-[9.5px] text-center font-medium truncate ${
+                          step.done ? "text-emerald-400" : step.active ? "text-violet-300" : "text-zinc-600"
+                        }`}>
+                          {step.label}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="text-[11.5px] text-zinc-300 text-center flex items-center justify-center gap-2 pt-1 bg-black/30 p-2 rounded-xl border border-white/5">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-400 shrink-0" />
+                    <span className="truncate">
+                      {status === "queued" || status === "connecting" ? "Queue active — Dispatching AI worker..." :
+                       status === "extracted" ? "Media captured — Decomposing assertions..." :
+                       status === "decomposed" ? `Claims decomposed (${progress.total || 'calculating'}) — Starting verification...` :
+                       status === "processing" ? `Verifying claim ${progress.completed} of ${progress.total || '...'} via Google search...` :
+                       "Processing telemetry stream..."}
+                    </span>
+                  </div>
+                </motion.div>
+              ) : null}
             </AnimatePresence>
           </div>
         </header>
@@ -355,7 +447,7 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                 </p>
                 <p className="text-[12px] text-zinc-400 mt-2 flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-                  TrulyLied's Groq Whisper LPU audio pipeline can bypass caption blocks and transcribe the audio directly.
+                  YouTube's bot protection frequently blocks cloud hosting IPs. Paste the transcript directly below to verify instantly with zero network blocks!
                 </p>
               </div>
             </div>
@@ -369,6 +461,13 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                 {retrying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
                 Retry Analysis Now
               </button>
+              <a
+                href="/?tab=text"
+                className="px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs transition-all flex items-center gap-1.5 shadow-lg shadow-violet-600/30 cursor-pointer"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Paste Transcript Directly (Guaranteed Verification)
+              </a>
               <a
                 href="/"
                 className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300 text-xs transition-all"
@@ -735,9 +834,24 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
             </AnimatePresence>
 
             {chunks.filter(c => c.type === "factual_claim").length === 0 && (
-              <div className="p-10 text-center border border-dashed border-zinc-800 rounded-xl text-zinc-600 text-[13px]">
-                <HelpCircle className="w-7 h-7 mx-auto mb-3 text-zinc-700" />
-                {status === "done" ? "No factual claims detected in this content." : "Waiting for claims to be extracted…"}
+              <div className="p-10 text-center border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-[13px] bg-zinc-950/40">
+                {status === "done" ? (
+                  <>
+                    <HelpCircle className="w-7 h-7 mx-auto mb-3 text-zinc-700" />
+                    <span>No factual claims detected in this content.</span>
+                  </>
+                ) : status === "failed" ? (
+                  <>
+                    <AlertTriangle className="w-7 h-7 mx-auto mb-3 text-rose-500/70" />
+                    <span>Analysis could not complete claim extraction.</span>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 className="w-6 h-6 animate-spin text-cyan-400" />
+                    <span className="text-zinc-300 font-medium">Extracting and decomposing factual statements...</span>
+                    <span className="text-zinc-500 text-xs">Claims will appear live as they are verified against web evidence</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -753,8 +867,17 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                 <span className="label-caps ml-1">({chunks.filter(c => c.type === "opinion").length})</span>
               </h2>
               {chunks.filter(c => c.type === "opinion").length === 0 ? (
-                <div className="surface-panel px-4 py-5 text-zinc-600 text-[12px] text-center">
-                  No opinion passages detected yet.
+                <div className="surface-panel px-4 py-5 text-zinc-500 text-[12px] text-center">
+                  {status === "done" ? (
+                    "No opinion or subjective passages detected."
+                  ) : status === "failed" ? (
+                    "Sentiment analysis unavailable."
+                  ) : (
+                    <div className="flex items-center justify-center gap-2 text-zinc-400">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-pink-400" />
+                      <span>Evaluating tone and subjective bias...</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 chunks.filter(c => c.type === "opinion").map(chunk => (
@@ -786,9 +909,20 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                 <span className="label-caps ml-1">({chunks.filter(c => c.type === "toxic_passage").length})</span>
               </h2>
               {chunks.filter(c => c.type === "toxic_passage").length === 0 ? (
-                <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/12 text-emerald-400 text-[12px] text-center">
-                  ✓ No toxic speech detected.
-                </div>
+                status === "done" ? (
+                  <div className="p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/12 text-emerald-400 text-[12px] text-center">
+                    ✓ No toxic speech detected.
+                  </div>
+                ) : status === "failed" ? (
+                  <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800 text-zinc-500 text-[12px] text-center">
+                    Safety evaluation not available.
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/15 text-amber-400/80 text-[12px] text-center flex items-center justify-center gap-2">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                    <span>Scanning content for toxic passages & safety...</span>
+                  </div>
+                )
               ) : (
                 chunks.filter(c => c.type === "toxic_passage").map(chunk => (
                   <div key={chunk.chunk_id} className={`p-4 rounded-xl border ${getVerdictStyle(chunk.verdict)} space-y-2`}>
