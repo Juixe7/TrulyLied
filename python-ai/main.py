@@ -160,9 +160,9 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
 
     # ── Attempt 1: Direct Subtitle Extraction via yt-dlp (Bypasses Datacenter IP restrictions) ──
     try:
-        print(f"[transcript] Attempting yt-dlp direct subtitle extraction for {video_id} (max 8s)...")
+        print(f"[transcript] Attempting yt-dlp direct subtitle extraction for {video_id} (max 22s)...")
         from multimodal import extract_subtitles_yt_dlp
-        sub_segments = run_with_timeout(extract_subtitles_yt_dlp, (video_id,), timeout=8)
+        sub_segments = run_with_timeout(extract_subtitles_yt_dlp, (video_id,), timeout=22)
         if sub_segments and len(sub_segments) > 0:
             print(f"[transcript] yt-dlp subtitle extraction succeeded: {len(sub_segments)} segments retrieved.")
             return sub_segments
@@ -170,11 +170,11 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
         print(f"[transcript] yt-dlp direct subtitle extraction failed ({e}). Proceeding to next fallback...")
         errors.append(f"yt-dlp subtitles: {e}")
 
-    # ── Attempt 2: Direct Connection via YouTubeTranscriptApi (Strict 6s cap) ──
+    # ── Attempt 2: Direct Connection via YouTubeTranscriptApi (Strict 8s cap) ──
     try:
-        print(f"[transcript] Attempting direct connection for video {video_id} (max 6s)...")
+        print(f"[transcript] Attempting direct connection for video {video_id} (max 8s)...")
         ytt_api = YouTubeTranscriptApi()
-        result = run_with_timeout(_fetch_with_ytt, (ytt_api, video_id), timeout=6)
+        result = run_with_timeout(_fetch_with_ytt, (ytt_api, video_id), timeout=8)
         if result and len(result) > 0:
             print(f"[transcript] Direct connection succeeded: {len(result)} segments retrieved.")
             return result
@@ -182,11 +182,11 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
         print(f"[transcript] Direct connection unavailable ({e}). Engaging audio pipeline...")
         errors.append(f"Direct connection: {e}")
 
-    # ── Attempt 3: Groq Whisper LPU Audio Fallback (via yt-dlp, max 14s cap) ──
+    # ── Attempt 3: Groq Whisper LPU Audio Fallback (via yt-dlp, max 25s cap) ──
     try:
-        print(f"[transcript] Engaging Groq Whisper LPU audio extraction for {video_id} (max 14s)...")
+        print(f"[transcript] Engaging Groq Whisper LPU audio extraction for {video_id} (max 25s)...")
         from multimodal import transcribe_youtube_audio_fallback
-        whisper_segments = run_with_timeout(transcribe_youtube_audio_fallback, (video_id,), timeout=14)
+        whisper_segments = run_with_timeout(transcribe_youtube_audio_fallback, (video_id,), timeout=25)
         if whisper_segments and len(whisper_segments) > 0:
             print(f"[transcript] Groq Whisper fallback success: {len(whisper_segments)} segments transcribed with timestamps!")
             return whisper_segments

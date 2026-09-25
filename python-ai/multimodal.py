@@ -176,17 +176,17 @@ def extract_subtitles_yt_dlp(url_or_id: str) -> List[Dict[str, Any]]:
         'skip_download': True,
         'writesubtitles': True,
         'writeautomaticsub': True,
-        'subtitleslangs': ['en', 'en-US', 'en-GB', 'en.*'],
+        'subtitleslangs': ['en', 'en-US', 'en-GB'],
         'subtitlesformat': 'json3/vtt/srt',
         'outtmpl': f"{sub_prefix}.%(ext)s",
         'quiet': True,
         'no_warnings': True,
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'ios', 'web']
+                'player_client': ['android', 'ios']
             }
         },
-        'socket_timeout': 12,
+        'socket_timeout': 15,
     }
 
     segments = []
@@ -297,10 +297,10 @@ def download_youtube_audio(url_or_id: str, max_duration_sec: int = 900) -> Optio
             'max_filesize': 24 * 1024 * 1024, # 24 MB safety cap to stay within Groq Whisper 25MB limit
             'extractor_args': {
                 'youtube': {
-                    'player_client': ['android', 'ios', 'web']
+                    'player_client': ['android', 'ios']
                 }
             },
-            'socket_timeout': 12,
+            'socket_timeout': 15,
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
