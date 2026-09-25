@@ -5,6 +5,8 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const http = require('http');
 const WebSocket = require('ws');
+const axios = require('axios');
+const { createClient } = require('redis');
 const Report = require('./models/Report');
 const Chunk = require('./models/Chunk');
 const { setWss, runPipeline } = require('./pipeline');
@@ -17,11 +19,54 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 setWss(wss);
 
-wss.on('connection', (ws, req) => {
+// ── Redis Pub/Sub for Horizontally Scaled WebSockets ──
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379/0';
+const redisSubscriber = createClient({ url: REDIS_URL });
+
+redisSubscriber.connect()
+  .then(() => {
+    console.log('[redis] Connected to Redis Pub/Sub');
+    redisSubscriber.pSubscribe('channel:report:*', (message, channel) => {
+      const parts = channel.split(':');
+      const reportId = parts[2];
+      wss.clients.forEach((client) => {
+        if (client.reportId === reportId && client.readyState === WebSocket.OPEN) {
+          client.send(message);
+        }
+      });
+    });
+  })
+  .catch((err) => {
+    console.log('[redis] Redis Pub/Sub offline, falling back to local WebSockets:', err.message);
+  });
+
+wss.on('connection', async (ws, req) => {
   // Extract report id from path /ws/report/:id
-  const match = req.url.match(/\/ws\/report\/(.+)/);
+  const match = req.url.match(/\/ws\/report\/([a-zA-Z0-9_-]+)/);
   if (match) {
-    ws.reportId = match[1];
+    const reportId = match[1];
+    ws.reportId = reportId;
+
+    // ── Snapshot & Catch-Up Handshake ──
+    // Send immediate snapshot of current report & verified chunks to eliminate connection race conditions
+    try {
+      const report = await Report.findOne({ report_id: reportId }).lean();
+      const chunks = await Chunk.find({ report_id: reportId }).lean();
+
+      if (ws.readyState === WebSocket.OPEN) {
+        const completedChunks = (chunks || []).filter(c => Boolean(c.verdict || c.sentiment)).length;
+        ws.send(JSON.stringify({
+          status: 'sync_state',
+          report_id: reportId,
+          report: report || null,
+          chunks: chunks || [],
+          total_chunks: chunks ? chunks.length : 0,
+          completed_chunks: completedChunks
+        }));
+      }
+    } catch (err) {
+      console.error(`[ws] Failed to send sync snapshot for report ${reportId}:`, err.message);
+    }
   }
 });
 
@@ -34,6 +79,8 @@ function detectContentType(url) {
   if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
   return 'blog';
 }
+
+const PYTHON_AI_URL = process.env.PYTHON_AI_URL || 'http://localhost:8000';
 
 // Routes
 app.post('/api/analyze', async (req, res) => {
@@ -54,8 +101,14 @@ app.post('/api/analyze', async (req, res) => {
 
   await report.save();
   
-  // Fire and forget pipeline
-  runPipeline(reportId, url);
+  // Dispatch to distributed Celery worker queue via Python AI service
+  try {
+    console.log(`[analyze] Dispatching ${reportId} to distributed Celery queue...`);
+    await axios.post(`${PYTHON_AI_URL}/pipeline/start`, { report_id: reportId, url }, { timeout: 3000 });
+  } catch (err) {
+    console.log(`[analyze] Celery dispatch failed (${err.message}), falling back to in-memory pipeline...`);
+    runPipeline(reportId, url);
+  }
 
   res.status(202).json({
     report_id: reportId,
@@ -67,8 +120,46 @@ app.post('/api/analyze', async (req, res) => {
 });
 
 app.post('/api/analyze-live', async (req, res) => {
-  // Stub for analyze-live (we can implement if needed or just use the same)
-  res.status(501).json({ error: 'Not implemented in Node port yet' });
+  const { url } = req.body;
+  if (!url) {
+    return res.status(400).json({ error: 'YouTube video URL is required' });
+  }
+
+  // Extract YouTube video id
+  const match = url.match(/(?:v=|youtu\.be\/|shorts\/)([a-zA-Z0-9_-]{11})/);
+  const videoId = match ? match[1] : null;
+
+  const reportId = uuidv4();
+  const domain = 'youtube.com';
+
+  const report = new Report({
+    report_id: reportId,
+    url,
+    domain,
+    status: 'queued',
+    content_type: 'youtube',
+    created_at: new Date().toISOString()
+  });
+
+  await report.save();
+
+  // Dispatch to distributed Celery worker queue via Python AI service
+  try {
+    console.log(`[analyze-live] Dispatching ${reportId} (video: ${videoId}) to Celery...`);
+    await axios.post(`${PYTHON_AI_URL}/pipeline/start`, { report_id: reportId, url }, { timeout: 4000 });
+  } catch (err) {
+    console.log(`[analyze-live] Celery dispatch failed (${err.message}), falling back to in-memory pipeline...`);
+    runPipeline(reportId, url);
+  }
+
+  res.status(202).json({
+    report_id: reportId,
+    video_id: videoId,
+    status: 'queued',
+    ws_url: `/ws/report/${reportId}`,
+    report_url: `/api/report/${reportId}`,
+    content_type: 'youtube'
+  });
 });
 
 app.get('/api/report/:id', async (req, res) => {

@@ -2,6 +2,7 @@ fastapi
 uvicorn
 trafilatura
 youtube-transcript-api
+yt-dlp
 requests
 pydantic
 python-dotenv
@@ -9,3 +10,16 @@ duckduckgo-search
 huggingface_hub
 beautifulsoup4
 groq
+celery[redis]
+redis
+qdrant-client
+fastembed
+flashrank
+rank-bm25
+google-genai
+google-generativeai
+prometheus-client
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+pymongo

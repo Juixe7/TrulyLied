@@ -4,20 +4,29 @@ const Chunk = require('./models/Chunk');
 const api = require('./workers/api');
 const { scoreDomain } = require('./workers/domain');
 
+const { createClient } = require('redis');
+
 // WSServer is injected from server.js
 let wss = null;
 function setWss(serverWss) {
   wss = serverWss;
 }
 
+const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379/0';
+const redisPublisher = createClient({ url: REDIS_URL });
+redisPublisher.connect().catch(() => {});
+
 function pushUpdate(reportId, update) {
-  if (!wss) return;
-  wss.clients.forEach((client) => {
-    // We attach reportId to the client on connection if they subscribed to it
-    if (client.reportId === reportId && client.readyState === 1 /* WebSocket.OPEN */) {
-      client.send(JSON.stringify(update));
-    }
-  });
+  if (wss) {
+    wss.clients.forEach((client) => {
+      if (client.reportId === reportId && client.readyState === 1 /* WebSocket.OPEN */) {
+        client.send(JSON.stringify(update));
+      }
+    });
+  }
+  if (redisPublisher.isOpen) {
+    redisPublisher.publish(`channel:report:${reportId}`, JSON.stringify(update)).catch(() => {});
+  }
 }
 
 async function markFailed(reportId, reason) {
@@ -93,6 +102,9 @@ async function runPipeline(reportId, url) {
         chunk.date_context = result.date_context;
         chunk.citations = result.citations;
         chunk.reasoning = result.reasoning;
+        chunk.critic_notes = result.critic_notes || '';
+        chunk.is_cached = Boolean(result.is_cached);
+        chunk.status = 'completed';
       } else if (chunk.type === 'opinion') {
         const result = await api.analyzeSentiment(chunk.text);
         chunk.sentiment = result.label;

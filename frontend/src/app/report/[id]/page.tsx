@@ -35,7 +35,20 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
     ws.onopen = () => console.log("WS Connected");
     ws.onmessage = (event) => {
       const msg = JSON.parse(event.data);
-      if (msg.status === "extracted" || msg.status === "decomposed") {
+      if (msg.status === "sync_state") {
+        if (msg.report) setReportData(msg.report);
+        if (msg.chunks && msg.chunks.length > 0) {
+          setChunks(msg.chunks);
+        }
+        if (msg.total_chunks) {
+          setProgress({ completed: msg.completed_chunks || 0, total: msg.total_chunks });
+        }
+        if (msg.report?.status === "done" || msg.report?.status === "completed_with_warnings") {
+          setStatus("done");
+        } else if (msg.report?.status) {
+          setStatus(msg.report.status);
+        }
+      } else if (msg.status === "extracted" || msg.status === "decomposed") {
         setStatus(msg.status);
       } else if (msg.status === "chunk_done" && msg.chunk) {
         if (msg.total_chunks) {
@@ -51,7 +64,10 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
         setStatus("done");
         fetch(`${API_URL}/api/report/${resolvedParams.id}`)
           .then(res => res.json())
-          .then(data => { if (data.report) setReportData(data.report); });
+          .then(data => {
+            if (data.report) setReportData(data.report);
+            if (data.chunks) setChunks(data.chunks);
+          });
       }
     };
     return () => ws.close();
@@ -362,6 +378,11 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                               {chunk.date_context}
                             </span>
                           )}
+                          {chunk.reasoning?.includes("⚡ Resolved from Semantic Cache") && (
+                            <span className="badge bg-violet-500/15 text-violet-400 border border-violet-500/25 flex items-center gap-1 text-[11px]">
+                              ⚡ Semantic Cache Hit (&lt;50ms)
+                            </span>
+                          )}
                         </div>
                       )}
                       {chunk.citations?.length > 0 && (
@@ -502,6 +523,15 @@ export default function ReportPage({ params }: { params: Promise<{ id: string }>
                     <p className="label-caps mb-2">AI Reasoning</p>
                     <div className="p-4 rounded-xl bg-blue-500/5 border border-blue-500/10 text-zinc-300 text-[13px] leading-relaxed">
                       {selectedClaim.reasoning}
+                    </div>
+                  </div>
+                )}
+
+                {selectedClaim.critic_notes && (
+                  <div>
+                    <p className="label-caps mb-2 text-amber-400">Red-Team Critic Review</p>
+                    <div className="p-4 rounded-xl bg-amber-500/5 border border-amber-500/15 text-zinc-300 text-[13px] leading-relaxed">
+                      {selectedClaim.critic_notes}
                     </div>
                   </div>
                 )}

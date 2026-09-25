@@ -1,46 +1,30 @@
-# Go
-trulylied.db
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-*.test
-*.out
-vendor/
-
 # Environment Variables
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+!.env.example
 python-ai/.env
+backend/.env
 
-# Python
+# Local Environments & Storage
+.venv/
+venv/
 python-ai/venv/
 python-ai/__pycache__/
 python-ai/*.pyc
 python-ai/.pytest_cache/
+**/qdrant_storage/
 
-# Frontend (Node)
-frontend/node_modules/
+# Node Modules & Builds
+**/node_modules/
 frontend/.next/
 frontend/out/
 frontend/build/
-frontend/.DS_Store
-frontend/npm-debug.log*
-frontend/yarn-debug.log*
-frontend/yarn-error.log*
-frontend/.pnp.*
-frontend/.pnpm-debug.log*
+.agents/
 
-# OS
+# OS & Keys
 .DS_Store
 Thumbs.db
-
 trulylied-key*.pem
 check_key.py
 debug_*.py
-.env
-.env.*
+test_semantic_multiagent.py

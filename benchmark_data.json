@@ -1,0 +1,89 @@
+{
+  "exp1_retrieval": {
+    "query": "James Webb Space Telescope discovery of oldest galaxies",
+    "raw_candidates_count": 10,
+    "hybrid_retrieval_ms": 2891.93,
+    "cross_encoder_rerank_ms": 173.22,
+    "total_retrieval_pipeline_ms": 3065.1499999999996,
+    "top_snippet_score": 1.0
+  },
+  "exp2_multi_agent_cache": {
+    "cold_claim": "Water expands when it freezes due to hydrogen bonding.",
+    "cold_dag_latency_s": 13.61,
+    "warm_cache_latency_ms": 8.3,
+    "paraphrase_latency_ms": 8.26,
+    "speedup_exact_x": 1639.8,
+    "speedup_paraphrase_x": 1647.7,
+    "verdict": "TRUE",
+    "confidence": 0.98
+  },
+  "exp3_rate_limiter": {
+    "tokens_acquired": 4,
+    "token_acquire_latencies_ms": [
+      4046.53,
+      4064.6,
+      4068.63,
+      4063.24
+    ],
+    "jitter_backoff_samples_s": [
+      1.4,
+      3.358,
+      8.303
+    ],
+    "quota_exhaustion_rate": "0.0%"
+  },
+  "exp4_storage_resilience": {
+    "concurrent_workers": 6,
+    "success_count": 6,
+    "crash_rate": "0.0%",
+    "stress_test_duration_s": 13.26,
+    "tier3_fallback_verified": true
+  },
+  "exp5_multimodal": {
+    "whisper_model": "whisper-large-v3-turbo",
+    "whisper_pipeline_ready": true,
+    "vlm_model": "gemini-3.6-flash",
+    "vlm_pipeline_ready": true,
+    "dual_path_ingestion": "YouTube Transcript API -> yt-dlp + Whisper Fallback"
+  },
+  "exp6_telemetry": {
+    "scraped_metrics_count": 35,
+    "metrics_sample": {
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"0.05\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"0.1\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"0.25\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"0.5\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"1.0\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"2.0\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"3.5\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"5.0\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"10.0\"}": "2.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"20.0\"}": "3.0",
+      "trulylied_claim_verification_latency_seconds_bucket{le=\"+Inf\"}": "3.0",
+      "trulylied_claim_verification_latency_seconds_count": "3.0",
+      "trulylied_claim_verification_latency_seconds_sum": "13.62243103981018",
+      "trulylied_claim_verification_latency_seconds_created": "1.7902307721603627e+09",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"0.05\"}": "0.0",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"0.1\"}": "0.0",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"0.25\"}": "0.0",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"0.5\"}": "0.0",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"1.0\"}": "0.0",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"2.0\"}": "0.0",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"4.0\"}": "3.0",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"8.0\"}": "3.0",
+      "trulylied_retrieval_latency_seconds_bucket{le=\"+Inf\"}": "3.0",
+      "trulylied_retrieval_latency_seconds_count": "3.0",
+      "trulylied_retrieval_latency_seconds_sum": "7.390462875366211",
+      "trulylied_retrieval_latency_seconds_created": "1.7902307721604443e+09",
+      "trulylied_semantic_cache_hits_total": "2.0",
+      "trulylied_semantic_cache_hits_created": "1.790230772160479e+09",
+      "trulylied_semantic_cache_misses_total": "1.0",
+      "trulylied_semantic_cache_misses_created": "1.790230772160495e+09",
+      "trulylied_llm_inference_total{model=\"qwen3.8-27b\",provider=\"groq\"}": "4.0",
+      "trulylied_llm_inference_created{model=\"qwen3.8-27b\",provider=\"groq\"}": "1.7902307835925107e+09",
+      "trulylied_degraded_chunks_total": "0.0",
+      "trulylied_degraded_chunks_created": "1.7902307721605277e+09",
+      "trulylied_active_pipeline_runs": "0.0"
+    }
+  }
+}

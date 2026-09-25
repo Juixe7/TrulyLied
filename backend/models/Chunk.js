@@ -9,7 +9,11 @@ const chunkSchema = new mongoose.Schema({
   confidence: { type: Number, default: 0 },
   date_context: { type: String },
   citations: { type: [String], default: [] },
-  reasoning: { type: String },
+  reasoning: { type: String, default: '' },
+  critic_notes: { type: String, default: '' },
+  is_cached: { type: Boolean, default: false },
+  status: { type: String, default: 'pending' }, // pending | completed | degraded
+  error_message: { type: String, default: '' },
   sentiment: { type: String }, // POSITIVE | NEGATIVE | NEUTRAL
   toxicity_score: { type: Number, default: 0 },
   start_time: { type: Number },

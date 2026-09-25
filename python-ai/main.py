@@ -3,9 +3,9 @@ import json
 import re
 from urllib.parse import urlparse
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import trafilatura
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api.formatters import TextFormatter
@@ -43,6 +43,7 @@ class ExtractResponse(BaseModel):
     domain: str
     title: str
     author: str  # Empty string if not found
+    segments: List[Dict[str, Any]] = []  # Timestamped segments for YouTube / video audio
 
 class DecomposeRequest(BaseModel):
     text: str
@@ -62,6 +63,8 @@ class FactCheckResponse(BaseModel):
     date_context: str
     citations: List[str]
     reasoning: str = ""  # LLM's explanation for the verdict (shown in deep-dive modal)
+    critic_notes: str = ""  # Red-team adversarial critique notes
+    is_cached: bool = False  # Indicates if result was served from semantic cache
 
 class SentimentRequest(BaseModel):
     text: str
@@ -195,6 +198,19 @@ def get_youtube_transcript(video_id: str) -> List[dict]:
         return result
     except Exception as e:
         errors.append(f"Direct connection: {e}")
+
+    # ── Attempt 4: Groq Whisper LPU Audio Fallback (via yt-dlp) ──
+    try:
+        print(f"[transcript] Subtitle tracks unavailable for {video_id}. Engaging Groq Whisper LPU audio fallback...")
+        from multimodal import transcribe_youtube_audio_fallback
+        whisper_segments = transcribe_youtube_audio_fallback(video_id)
+        if whisper_segments and len(whisper_segments) > 0:
+            print(f"[transcript] Groq Whisper fallback success: {len(whisper_segments)} segments transcribed with timestamps!")
+            return whisper_segments
+        else:
+            errors.append("Groq Whisper produced empty transcript.")
+    except Exception as e:
+        errors.append(f"Groq Whisper audio fallback failed: {e}")
 
     error_summary = " | ".join(errors)
     raise Exception(f"Failed to fetch YouTube transcript. Methods tried: {error_summary}")
@@ -446,7 +462,8 @@ def extract_content(req: ExtractRequest):
                 content_type="youtube",
                 domain=domain,
                 title=f"YouTube Video ({video_id}){lang_hint}",
-                author=""
+                author="",
+                segments=raw_data
             )
         except Exception as e:
             raise HTTPException(
@@ -620,108 +637,30 @@ Return ONLY JSON. [/INST]"""
 
 @app.post("/factcheck", response_model=FactCheckResponse)
 def factcheck_claim(req: FactCheckRequest):
-    query = req.claim
-    evidence = []
-    
-    # 1. Optimize the search query from the raw transcript segment
-    # Raw spoken text often yields terrible search results.
-    query_prompt = f"""<s>[INST] Extract a highly concise Google search query (3-6 words) to fact-check the main claim in this text:
-Text: "{req.claim}"
-Return ONLY the search query string, nothing else. [/INST]"""
     try:
-        optimized_query = call_hf_llm(query_prompt).strip().strip('"').strip("'")
-        if optimized_query and len(optimized_query) < 100:
-            query = optimized_query
-    except Exception:
-        pass # Fallback to using the raw claim if LLM fails
-        
-    print(f"[factcheck] Optimized Query: {query}")
-    
-    if req.fast_mode:
-        results = perform_search(query)
-        evidence = results[:3] if results else []
-    else:
-        # Self-Corrective RAG Loop (Max 2 retries)
-        for attempt in range(3):
-            results = perform_search(query)
-            if not results:
-                break
-                
-            formatted_results = "\n\n".join([f"[{i}] {r['title']} (Date: {r['date']})\nSnippet: {r['snippet']}" for i, r in enumerate(results)])
-            
-            # Grade relevance
-            grade_prompt = f"""<s>[INST] You are a research assistant. Grade the relevance of these search results for fact-checking this claim: "{req.claim}"
-Return ONLY a valid JSON array of indices for the results that are highly relevant. Example: [0, 2]
-If none are relevant, return an empty array: []
-
-Results:
-{formatted_results}
-[/INST]"""
-            try:
-                raw_grade = call_hf_llm(grade_prompt).strip()
-                arr_match = re.search(r'\[.*\]', raw_grade, re.DOTALL)
-                if arr_match: raw_grade = arr_match.group(0)
-                relevant_indices = json.loads(raw_grade)
-                
-                relevant_results = [results[i] for i in relevant_indices if isinstance(i, int) and 0 <= i < len(results)]
-                if len(relevant_results) >= 1: # We found sufficient evidence
-                    evidence = relevant_results
-                    break
-            except Exception:
-                evidence = results[:2]
-                break
-                
-            # Rewrite query if insufficient evidence and we have retries left
-            if attempt < 2:
-                rewrite_prompt = f"""<s>[INST] The search query "{query}" did not find good evidence to verify this claim: "{req.claim}"
-Rewrite the search query to be more specific or use different keywords. Return ONLY the new query string. [/INST]"""
-                query = call_hf_llm(rewrite_prompt).strip().strip('"')
-            
-    # Verdict Generation
-    if not evidence:
-        return FactCheckResponse(verdict="UNVERIFIABLE", confidence=0.0, date_context="No evidence found", citations=[])
-        
-    final_evidence_text = "\n\n".join([f"Source {i+1}: {r['snippet']} (Link: {r['link']})" for i, r in enumerate(evidence)])
-    
-    verdict_prompt = f"""[INST] You are an expert fact-checker. Based ONLY on the evidence below, rate the claim.
-Claim: "{req.claim}"
-
-Evidence:
-{final_evidence_text}
-
-Return ONLY a valid JSON object with EXACTLY these keys:
-"verdict": must be exactly "TRUE", "FALSE", "MISLEADING", or "UNVERIFIABLE"
-"confidence": a float between 0.0 and 1.0
-"date_context": a short string explaining when this was true based on the evidence
-"citations": an array of URLs used to make this decision
-"reasoning": a 2-3 sentence explanation of WHY you gave this verdict, citing specific evidence
-
-Return ONLY JSON. [/INST]"""
-
-    try:
-        raw_verdict = call_hf_llm(verdict_prompt).strip()
-        json_match = re.search(r'\{.*\}', raw_verdict, re.DOTALL)
-        if json_match: raw_verdict = json_match.group(0)
-        data = json.loads(raw_verdict)
-        
+        from multi_agent import verify_claim_multi_agent
+        result = verify_claim_multi_agent(req.claim)
         return FactCheckResponse(
-            verdict=data.get("verdict", "UNVERIFIABLE").upper(),
-            confidence=float(data.get("confidence", 0.5)),
-            date_context=data.get("date_context", ""),
-            citations=data.get("citations", []),
-            reasoning=data.get("reasoning", "")
+            verdict=result.get("verdict", "UNVERIFIABLE"),
+            confidence=float(result.get("confidence", 0.5)),
+            date_context=result.get("date_context", "Current"),
+            citations=result.get("citations", []),
+            reasoning=result.get("reasoning", ""),
+            critic_notes=result.get("critic_notes", ""),
+            is_cached=bool(result.get("is_cached", False))
         )
     except Exception as e:
-        print(f"[factcheck] Error generating verdict: {e}")
-        # If the LLM is completely blocked by DNS, fallback to a heuristic so the UI still works
-        if evidence:
-            return FactCheckResponse(
-                verdict="TRUE", 
-                confidence=0.75, 
-                date_context="(Heuristic Fallback: LLM Offline)", 
-                citations=[e['link'] for e in evidence[:2]]
-            )
-        return FactCheckResponse(verdict="UNVERIFIABLE", confidence=0.0, date_context="Error generating verdict", citations=[])
+        print(f"[factcheck] Error in multi-agent workflow: {e}")
+        return FactCheckResponse(
+            verdict="UNVERIFIABLE",
+            confidence=0.0,
+            date_context="Error during verification",
+            citations=[],
+            reasoning=f"Verification failed: {str(e)}",
+            critic_notes="Critic evaluation bypassed due to upstream error.",
+            is_cached=False
+        )
+
 
 
 @app.post("/sentiment", response_model=SentimentResponse)
@@ -922,9 +861,38 @@ USER QUESTION:
             
         return ChatResponse(answer=answer.strip())
     except Exception as e:
-        print(f"[chat] Error generating answer: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate answer")
+        print(f"[chat] Error in ask_chat: {e}")
+        return ChatResponse(answer="I was unable to retrieve a response at this moment. Please try again.")
+
+class PipelineStartRequest(BaseModel):
+    report_id: str
+    url: str
+
+@app.post("/pipeline/start")
+def trigger_pipeline(req: PipelineStartRequest):
+    """Triggers distributed Celery chord pipeline or in-process fallback."""
+    try:
+        from tasks import start_pipeline_task
+        task = start_pipeline_task.delay(req.report_id, req.url)
+        return {"status": "queued", "task_id": str(task.id)}
+    except Exception as e:
+        import threading
+        from tasks import start_pipeline_task
+        threading.Thread(target=start_pipeline_task, args=(req.report_id, req.url), daemon=True).start()
+        return {"status": "queued", "fallback": True}
+
+@app.get("/metrics")
+def get_prometheus_metrics():
+    """Prometheus metrics endpoint for scraping P50/P95/P99 latency, cache hits, etc."""
+    try:
+        from telemetry import get_metrics_payload
+        data, content_type = get_metrics_payload()
+        return Response(content=data, media_type=content_type)
+    except Exception as e:
+        return Response(content=f"# Error exporting metrics: {e}", media_type="text/plain")
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
