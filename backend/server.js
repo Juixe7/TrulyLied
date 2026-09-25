@@ -106,24 +106,29 @@ app.post('/chat', handleChatProxy);
 
 // Routes
 app.post('/api/analyze', async (req, res) => {
-  const { url } = req.body;
-  if (!url) return res.status(400).json({ error: 'url is required' });
+  const { url, text, title } = req.body;
+  if (!url && !text) return res.status(400).json({ error: 'Either url or text is required' });
 
-  let domain = 'unknown';
-  try {
-    domain = new URL(url).hostname;
-  } catch (e) {
-    return res.status(400).json({ error: 'Invalid URL format' });
+  let domain = 'direct-input';
+  let targetUrl = url || 'https://direct.input/transcript';
+  if (url) {
+    try {
+      domain = new URL(url).hostname;
+    } catch (e) {
+      if (!text) return res.status(400).json({ error: 'Invalid URL format' });
+    }
   }
 
   const reportId = uuidv4();
-  const contentType = detectContentType(url);
+  const contentType = text ? 'text' : detectContentType(targetUrl);
 
   const report = new Report({
     report_id: reportId,
-    url,
+    url: targetUrl,
     domain,
+    title: title || (text ? 'Direct Text Submission' : ''),
     status: 'queued',
+    raw_text: text || '',
     content_type: contentType,
     created_at: new Date().toISOString()
   });
@@ -133,14 +138,14 @@ app.post('/api/analyze', async (req, res) => {
   // Dual Execution Engine:
   // Dispatches to distributed Celery cluster when ENABLE_CELERY is active,
   // or executes the high-throughput resilient pipeline directly.
-  if (process.env.ENABLE_CELERY === 'true') {
-    axios.post(`${PYTHON_AI_URL}/pipeline/start`, { report_id: reportId, url }, { timeout: 3000 })
+  if (process.env.ENABLE_CELERY === 'true' && !text) {
+    axios.post(`${PYTHON_AI_URL}/pipeline/start`, { report_id: reportId, url: targetUrl }, { timeout: 3000 })
       .catch((err) => {
         console.warn(`[analyze] Celery dispatch unavailable (${err.message}), running direct pipeline...`);
-        runPipeline(reportId, url).catch((e) => markFailed(reportId, e.message));
+        runPipeline(reportId, targetUrl, text, title).catch((e) => markFailed(reportId, e.message));
       });
   } else {
-    runPipeline(reportId, url).catch((e) => markFailed(reportId, e.message));
+    runPipeline(reportId, targetUrl, text, title).catch((e) => markFailed(reportId, e.message));
   }
 
   res.status(202).json({

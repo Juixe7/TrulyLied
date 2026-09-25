@@ -6,6 +6,7 @@ import { API_URL } from "@/lib/config";
 import {
   Search, Loader2, ShieldCheck, Zap, Activity,
   ArrowRight, CheckCircle2, Radio, TrendingUp, Globe, PlayCircle,
+  FileText, Link2
 } from "lucide-react";
 import { motion, useInView } from "framer-motion";
 import Navbar from "@/components/Navbar";
@@ -135,24 +136,31 @@ const PREVIEW_CARDS = [
 ];
 
 export default function LandingPage() {
+  const [mode, setMode] = useState<"url" | "text">("url");
   const [url, setUrl] = useState("");
+  const [text, setText] = useState("");
+  const [title, setTitle] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
 
   const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!url) return;
+    if (mode === "url" && !url) return;
+    if (mode === "text" && !text) return;
     setLoading(true);
     setError("");
     try {
+      const payload = mode === "url"
+        ? { url }
+        : { text, title: title.trim() || "Direct Transcript Analysis" };
       const res = await fetch(`${API_URL}/api/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to analyze URL");
+      if (!res.ok) throw new Error(data.error || "Failed to analyze content");
       router.push(`/report/${data.report_id}`);
     } catch (err: any) {
       setError(err.message);
@@ -205,86 +213,161 @@ export default function LandingPage() {
             TrulyLied deploys a 4-stage distributed multi-agent DAG to dissect claims across news articles, blogs, and YouTube videos — verifying evidence against live web indices with sub-second hybrid retrieval.
           </p>
 
-          {/* Content type chips - Vibrant & Clickable */}
-          <div className="mb-8">
-            <p className="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold mb-3">
-              Supported Media Formats — Click to load sample
-            </p>
-            <div className="flex flex-wrap gap-2.5">
-              {CONTENT_TYPES.map(({ icon, label, color, dot, sampleUrl }) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => setUrl(sampleUrl)}
-                  className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-[12px] font-[550] transition-all duration-200 cursor-pointer ${color}`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${dot} animate-pulse`} />
-                  {icon}
-                  {label}
-                </button>
-              ))}
-            </div>
+          {/* Mode Switcher Tabs */}
+          <div className="flex items-center gap-2 mb-6">
+            <button
+              type="button"
+              onClick={() => setMode("url")}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                mode === "url"
+                  ? "bg-violet-600 text-white shadow-lg shadow-violet-600/30 border border-violet-500/40"
+                  : "bg-white/5 text-zinc-400 hover:text-white border border-white/8 hover:bg-white/10"
+              }`}
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              Verify Link / Video
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("text")}
+              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all cursor-pointer ${
+                mode === "text"
+                  ? "bg-violet-600 text-white shadow-lg shadow-violet-600/30 border border-violet-500/40"
+                  : "bg-white/5 text-zinc-400 hover:text-white border border-white/8 hover:bg-white/10"
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              Paste Transcript / Text
+            </button>
           </div>
+
+          {/* Content type chips - shown when mode is URL */}
+          {mode === "url" && (
+            <div className="mb-8">
+              <p className="text-[11px] uppercase tracking-wider text-zinc-500 font-semibold mb-3">
+                Supported Media Formats — Click to load sample
+              </p>
+              <div className="flex flex-wrap gap-2.5">
+                {CONTENT_TYPES.map(({ icon, label, color, dot, sampleUrl }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => setUrl(sampleUrl)}
+                    className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-[12px] font-[550] transition-all duration-200 cursor-pointer ${color}`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full ${dot} animate-pulse`} />
+                    {icon}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Search form with glowing border */}
           <form onSubmit={handleAnalyze} className="w-full max-w-2xl">
-            <div className="relative group p-[1.5px] rounded-2xl bg-gradient-to-r from-violet-500/35 via-fuchsia-500/25 to-indigo-500/35 hover:from-violet-500/50 hover:to-indigo-500/50 focus-within:from-violet-500 focus-within:to-indigo-500 transition-all duration-300 shadow-[0_0_35px_-5px_rgba(124,58,237,0.22)] focus-within:shadow-[0_0_45px_rgba(124,58,237,0.4)]">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center bg-[#0d0d12]/95 backdrop-blur-xl rounded-[15px] p-2 transition-colors gap-2 sm:gap-0">
-                <div className="flex-1 flex items-center px-3 py-2 sm:py-1">
-                  <Search className="w-4 h-4 text-violet-400 shrink-0 mr-3" />
-                  <input
-                    type="url"
-                    required
-                    placeholder="Paste URL — YouTube video, news article, blog, or press release…"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    className="flex-1 bg-transparent text-[14.5px] text-zinc-100 placeholder:text-zinc-500 outline-none min-w-0 font-normal"
-                  />
-                  {url && (
-                    <button
-                      type="button"
-                      onClick={() => setUrl("")}
-                      className="text-zinc-500 hover:text-zinc-300 text-xs px-2 py-1 mr-1"
-                    >
-                      Clear
-                    </button>
-                  )}
+            {mode === "url" ? (
+              <div className="relative group p-[1.5px] rounded-2xl bg-gradient-to-r from-violet-500/35 via-fuchsia-500/25 to-indigo-500/35 hover:from-violet-500/50 hover:to-indigo-500/50 focus-within:from-violet-500 focus-within:to-indigo-500 transition-all duration-300 shadow-[0_0_35px_-5px_rgba(124,58,237,0.22)] focus-within:shadow-[0_0_45px_rgba(124,58,237,0.4)]">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center bg-[#0d0d12]/95 backdrop-blur-xl rounded-[15px] p-2 transition-colors gap-2 sm:gap-0">
+                  <div className="flex-1 flex items-center px-3 py-2 sm:py-1">
+                    <Search className="w-4 h-4 text-violet-400 shrink-0 mr-3" />
+                    <input
+                      type="url"
+                      required
+                      placeholder="Paste URL — YouTube video, news article, blog, or press release…"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      className="flex-1 bg-transparent text-[14.5px] text-zinc-100 placeholder:text-zinc-500 outline-none min-w-0 font-normal"
+                    />
+                    {url && (
+                      <button
+                        type="button"
+                        onClick={() => setUrl("")}
+                        className="text-zinc-500 hover:text-zinc-300 text-xs px-2 py-1 mr-1"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={loading || !url}
+                    className="flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[13.5px] font-[650] px-6 py-3 rounded-xl shadow-lg shadow-violet-600/30 hover:shadow-violet-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:hover:scale-100 shrink-0 w-full sm:w-auto"
+                  >
+                    {loading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        Analyze <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
                 </div>
-                <button
-                  type="submit"
-                  disabled={loading || !url}
-                  className="flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[13.5px] font-[650] px-6 py-3 rounded-xl shadow-lg shadow-violet-600/30 hover:shadow-violet-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:hover:scale-100 shrink-0 w-full sm:w-auto"
-                >
-                  {loading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Analyzing...
-                    </>
-                  ) : (
-                    <>
-                      Analyze <ArrowRight className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
               </div>
-            </div>
+            ) : (
+              <div className="relative group p-[1.5px] rounded-2xl bg-gradient-to-r from-violet-500/35 via-fuchsia-500/25 to-indigo-500/35 hover:from-violet-500/50 hover:to-indigo-500/50 focus-within:from-violet-500 focus-within:to-indigo-500 transition-all duration-300 shadow-[0_0_35px_-5px_rgba(124,58,237,0.22)] focus-within:shadow-[0_0_45px_rgba(124,58,237,0.4)]">
+                <div className="bg-[#0d0d12]/95 backdrop-blur-xl rounded-[15px] p-4 space-y-3">
+                  <input
+                    type="text"
+                    placeholder="Optional title / topic (e.g. Kurzgesagt - Godlike Civilizations, Political Speech)..."
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    className="w-full bg-white/[0.04] border border-white/8 rounded-xl px-3.5 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-violet-500/50 transition-all"
+                  />
+                  <textarea
+                    required
+                    rows={6}
+                    placeholder="Paste video dialogue, article text, speech transcript, or key statements here..."
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    className="w-full bg-white/[0.04] border border-white/8 rounded-xl p-3.5 text-sm text-zinc-100 placeholder:text-zinc-500 outline-none focus:border-violet-500/50 transition-all resize-y font-normal leading-relaxed"
+                  />
+                  <div className="flex items-center justify-between pt-1">
+                    <span className="text-[11.5px] text-zinc-500">
+                      {text ? `${text.trim().split(/\s+/).length} words • ${text.length} chars` : "Paste raw text or video captions directly"}
+                    </span>
+                    <button
+                      type="submit"
+                      disabled={loading || !text.trim()}
+                      className="flex items-center justify-center gap-2 bg-gradient-to-r from-violet-600 via-indigo-600 to-purple-600 hover:from-violet-500 hover:to-indigo-500 text-white text-[13.5px] font-[650] px-6 py-2.5 rounded-xl shadow-lg shadow-violet-600/30 hover:shadow-violet-600/50 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:hover:scale-100 shrink-0 cursor-pointer"
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          Verify Transcript <ArrowRight className="w-4 h-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
-            {/* Quick Demo Samples Bar */}
-            <div className="flex items-center flex-wrap gap-2 mt-3.5 text-xs">
-              <span className="text-zinc-500 flex items-center gap-1 font-medium text-[11.5px]">
-                ⚡ Quick sample test:
-              </span>
-              {DEMO_SAMPLES.map((s) => (
-                <button
-                  key={s.label}
-                  type="button"
-                  onClick={() => setUrl(s.url)}
-                  className="px-2.5 py-1 rounded-lg bg-white/[0.05] hover:bg-violet-500/15 border border-white/8 hover:border-violet-500/35 text-zinc-400 hover:text-violet-300 transition-all cursor-pointer text-[11.5px]"
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
+            {/* Quick Demo Samples Bar - only in URL mode */}
+            {mode === "url" && (
+              <div className="flex items-center flex-wrap gap-2 mt-3.5 text-xs">
+                <span className="text-zinc-500 flex items-center gap-1 font-medium text-[11.5px]">
+                  ⚡ Quick sample test:
+                </span>
+                {DEMO_SAMPLES.map((s) => (
+                  <button
+                    key={s.label}
+                    type="button"
+                    onClick={() => setUrl(s.url)}
+                    className="px-2.5 py-1 rounded-lg bg-white/[0.05] hover:bg-violet-500/15 border border-white/8 hover:border-violet-500/35 text-zinc-400 hover:text-violet-300 transition-all cursor-pointer text-[11.5px]"
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {error && <p className="mt-3 text-[13px] text-red-400 font-medium">{error}</p>}
           </form>

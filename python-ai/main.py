@@ -35,7 +35,9 @@ HF_TOXICITY_MODEL  = "unitary/toxic-bert"
 
 # --- Models ---
 class ExtractRequest(BaseModel):
-    url: str
+    url: Optional[str] = None
+    text: Optional[str] = None
+    title: Optional[str] = None
 
 class ExtractResponse(BaseModel):
     text: str
@@ -142,14 +144,27 @@ def get_free_proxies() -> List[str]:
 def get_youtube_transcript(video_id: str) -> List[dict]:
     """
     Master transcript fetcher with layered, high-speed fallbacks:
-    1. Direct YouTube Transcript API (fastest, 2-3s)
-    2. Groq Whisper LPU Audio Fallback via yt-dlp (bypasses all caption restrictions)
-    3. Custom Proxy (if PROXY_URL configured)
+    1. Direct Subtitle Extraction via yt-dlp (fastest, mobile player client spoofing, bypasses cloud IP blocks)
+    2. Direct YouTube Transcript API (if unblocked)
+    3. Groq Whisper LPU Audio Fallback via yt-dlp (for videos without captions)
+    4. Custom Proxy (if PROXY_URL configured)
     Returns list of {text, start, duration} dicts.
     """
     errors = []
 
-    # ── Attempt 1: Direct Connection (Fastest Path) ──
+    # ── Attempt 1: Direct Subtitle Extraction via yt-dlp (Bypasses Datacenter IP restrictions) ──
+    try:
+        print(f"[transcript] Attempting yt-dlp direct subtitle extraction for {video_id}...")
+        from multimodal import extract_subtitles_yt_dlp
+        sub_segments = extract_subtitles_yt_dlp(video_id)
+        if sub_segments and len(sub_segments) > 0:
+            print(f"[transcript] yt-dlp subtitle extraction succeeded: {len(sub_segments)} segments retrieved.")
+            return sub_segments
+    except Exception as e:
+        print(f"[transcript] yt-dlp direct subtitle extraction failed ({e}). Proceeding to next fallback...")
+        errors.append(f"yt-dlp subtitles: {e}")
+
+    # ── Attempt 2: Direct Connection via YouTubeTranscriptApi ──
     try:
         print(f"[transcript] Attempting direct connection for video {video_id}...")
         ytt_api = YouTubeTranscriptApi()
@@ -460,6 +475,24 @@ def fetch_youtube_oembed_context(video_id: str) -> Dict[str, Any]:
 
 @app.post("/extract", response_model=ExtractResponse)
 def extract_content(req: ExtractRequest):
+    # ── Direct Text / Transcript Input ──────────────────────────────────────────
+    if req.text and len(req.text.strip()) > 0:
+        cleaned_text = req.text.strip()
+        user_title = req.title.strip() if req.title else "Direct Text Analysis"
+        lang = detect_language(cleaned_text)
+        lang_hint = f" (Language detected: {lang})" if lang != "en" else ""
+        return ExtractResponse(
+            text=cleaned_text,
+            content_type="text",
+            domain="direct-input",
+            title=f"{user_title}{lang_hint}",
+            author="User Input",
+            segments=[]
+        )
+
+    if not req.url:
+        raise HTTPException(status_code=400, detail="Either 'url' or 'text' must be provided.")
+
     domain = urlparse(req.url).netloc.replace("www.", "")
     
     # ── Twitter / X Thread ──────────────────────────────────────────────────────
@@ -477,6 +510,20 @@ def extract_content(req: ExtractRequest):
         video_id = extract_youtube_video_id(req.url)
         if not video_id:
             raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+
+        # Resolve real video title & channel via oEmbed
+        video_title = f"YouTube Video ({video_id})"
+        video_author = "YouTube Channel"
+        try:
+            oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+            ores = requests.get(oembed_url, timeout=5)
+            if ores.status_code == 200:
+                odata = ores.json()
+                video_title = odata.get("title", video_title)
+                video_author = odata.get("author_name", video_author)
+        except Exception as e:
+            print(f"[extract] oEmbed title warning: {e}")
+
         try:
             raw_data = get_youtube_transcript(video_id)
             text = " ".join(s["text"] for s in raw_data if s.get("text"))
@@ -487,20 +534,15 @@ def extract_content(req: ExtractRequest):
                 text=text,
                 content_type="youtube",
                 domain=domain,
-                title=f"YouTube Video ({video_id}){lang_hint}",
-                author="",
+                title=f"{video_title}{lang_hint}",
+                author=video_author,
                 segments=raw_data
             )
         except Exception as e:
-            print(f"[extract] Transcript pipeline failed: {e}. Engaging Adaptive YouTube Metadata Fallback...")
-            fb = fetch_youtube_oembed_context(video_id)
-            return ExtractResponse(
-                text=fb["text"],
-                content_type="youtube",
-                domain=domain,
-                title=fb["title"],
-                author=fb["author"],
-                segments=fb["segments"]
+            print(f"[extract] All transcript methods failed for {video_id}: {e}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"Could not extract spoken dialogue or captions from YouTube video ({video_id}). YouTube bot-protection or lack of subtitles prevented automated extraction. Please paste the transcript or key claims directly into TrulyLied."
             )
     else:
         # Try fetching with requests first using a real User-Agent
@@ -639,16 +681,26 @@ def extract_live_transcript(req: LiveExtractRequest):
 
 @app.post("/decompose", response_model=DecomposedClaims)
 def decompose_claims(req: DecomposeRequest):
-    truncated = req.text[:3500] 
-    prompt = f"""<s>[INST] You are a precise fact-checking assistant. Analyze the article and extract structured information.
-You MUST respond with ONLY a valid JSON object. No markdown.
-The JSON must have EXACTLY these three keys: "factual_claims", "opinions", "toxic_passages".
+    truncated = req.text[:6000] 
+    prompt = f"""<s>[INST] You are an expert investigative fact-checking assistant.
+Analyze the provided transcript/text and extract clear, verifiable factual claims, opinions, and toxic statements.
 
-Article:
+CRITICAL RULES:
+1. Extract SUBSTANTIVE assertions about science, physics, history, technology, statistics, geopolitics, or real-world events.
+2. NEVER extract meta-claims about video titles, channel names, upload dates, views, audio/music tracks, book recommendations, merchandise, or sponsors.
+3. Every factual claim must be a standalone, self-contained statement suitable for independent verification against scientific and historical databases.
+4. Extract up to 10 of the most significant factual claims.
+
+Content:
 ---
 {truncated}
 ---
-Return ONLY JSON. [/INST]"""
+
+Return ONLY a valid JSON object with EXACTLY these three keys:
+"factual_claims": [list of verifiable factual statements],
+"opinions": [list of subjective beliefs or philosophical musings],
+"toxic_passages": [list of hateful or toxic statements]
+[/INST]"""
 
     try:
         raw_output = call_hf_llm(prompt).strip()

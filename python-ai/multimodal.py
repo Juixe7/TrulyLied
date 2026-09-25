@@ -9,6 +9,7 @@ Provides:
 import os
 import re
 import json
+import uuid
 import base64
 import logging
 import tempfile
@@ -144,6 +145,130 @@ def transcribe_with_groq_whisper(
     except Exception as e:
         logger.error(f"Groq Whisper transcription failed: {e}")
         return []
+
+
+def extract_subtitles_yt_dlp(url_or_id: str) -> List[Dict[str, Any]]:
+    """
+    Direct Subtitle Extraction via yt-dlp:
+    1. Downloads official or auto-generated subtitle tracks (JSON3/VTT) with zero video/audio download.
+    2. Spoofs mobile player clients (android, ios, web) to bypass datacenter IP restrictions.
+    3. Returns parsed segment-level [{text, start, duration}] dicts in sub-2s latency.
+    """
+    try:
+        import yt_dlp
+    except ImportError:
+        logger.warning("yt-dlp is not installed in the environment.")
+        return []
+
+    # Standardize video ID and URL
+    if url_or_id.startswith("http"):
+        match = re.search(r'(?:v=|youtu\.be\/|shorts\/)([a-zA-Z0-9_-]{11})', url_or_id)
+        video_id = match.group(1) if match else url_or_id
+        url = url_or_id
+    else:
+        video_id = url_or_id
+        url = f"https://www.youtube.com/watch?v={video_id}"
+
+    temp_dir = tempfile.gettempdir()
+    sub_prefix = os.path.join(temp_dir, f"trulylied_sub_{uuid.uuid4().hex[:6]}_{video_id}")
+
+    ydl_opts = {
+        'skip_download': True,
+        'writesubtitles': True,
+        'writeautomaticsub': True,
+        'subtitleslangs': ['en', 'en-US', 'en-GB', 'en.*'],
+        'subtitlesformat': 'json3/vtt/srt',
+        'outtmpl': f"{sub_prefix}.%(ext)s",
+        'quiet': True,
+        'no_warnings': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'ios', 'web']
+            }
+        },
+        'socket_timeout': 12,
+    }
+
+    segments = []
+    found_files = []
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            logger.info(f"[yt-dlp-subs] Fetching caption tracks for: {url}")
+            ydl.extract_info(url, download=True)
+
+            prefix_base = os.path.basename(sub_prefix)
+            for fname in os.listdir(temp_dir):
+                if fname.startswith(prefix_base):
+                    found_files.append(os.path.join(temp_dir, fname))
+
+            logger.info(f"[yt-dlp-subs] Found {len(found_files)} caption files.")
+
+            json3_files = [f for f in found_files if f.endswith('.json3')]
+            vtt_files = [f for f in found_files if f.endswith('.vtt')]
+            srt_files = [f for f in found_files if f.endswith('.srt')]
+
+            target_file = None
+            if json3_files:
+                target_file = json3_files[0]
+            elif vtt_files:
+                target_file = vtt_files[0]
+            elif srt_files:
+                target_file = srt_files[0]
+
+            if target_file and os.path.exists(target_file):
+                logger.info(f"[yt-dlp-subs] Parsing subtitle file: {target_file}")
+                with open(target_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+
+                if target_file.endswith('.json3'):
+                    data = json.loads(content)
+                    events = data.get('events', [])
+                    for ev in events:
+                        start_ms = ev.get('tStartMs', 0)
+                        dur_ms = ev.get('dDurationMs', 0)
+                        segs = ev.get('segs', [])
+                        text = "".join(s.get('utf8', '') for s in segs).strip()
+                        text = text.replace('\n', ' ')
+                        if text and text != '\n':
+                            segments.append({
+                                'text': text,
+                                'start': round(start_ms / 1000.0, 2),
+                                'duration': round(dur_ms / 1000.0, 2)
+                            })
+                elif target_file.endswith('.vtt'):
+                    vtt_pattern = re.compile(
+                        r'(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})\n(.+?)(?=\n\n|\n\d{2}:\d{2}|\Z)',
+                        re.DOTALL
+                    )
+                    for match in vtt_pattern.finditer(content):
+                        start_str, end_str, text = match.groups()
+                        parts = start_str.split(":")
+                        start = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                        parts2 = end_str.split(":")
+                        end = int(parts2[0]) * 3600 + int(parts2[1]) * 60 + float(parts2[2])
+                        clean_t = re.sub(r'<[^>]+>', '', text).strip()
+                        if clean_t:
+                            segments.append({
+                                'text': clean_t,
+                                'start': round(start, 2),
+                                'duration': round(end - start, 2)
+                            })
+
+        if segments:
+            logger.info(f"[yt-dlp-subs] Successfully extracted {len(segments)} caption segments.")
+            return segments
+
+    except Exception as e:
+        logger.warning(f"[yt-dlp-subs] Subtitle extraction failed: {e}")
+    finally:
+        for fpath in found_files:
+            try:
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+            except Exception:
+                pass
+
+    return []
 
 
 def download_youtube_audio(url_or_id: str, max_duration_sec: int = 900) -> Optional[str]:

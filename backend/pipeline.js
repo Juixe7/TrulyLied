@@ -49,23 +49,30 @@ async function markFailed(reportId, reason) {
   pushUpdate(reportId, { status: 'error', error: reason });
 }
 
-async function runPipeline(reportId, url) {
-  console.log(`[pipeline] Starting report ${reportId} | URL: ${url}`);
+async function runPipeline(reportId, url, rawText = null, userTitle = null) {
+  console.log(`[pipeline] Starting report ${reportId} | URL: ${url || 'direct-text'}`);
 
   try {
-    // Phase 1 - Extract Content
+    // Phase 1 - Extract Content or Use Provided Text
     let extracted;
-    try {
-      extracted = await api.extract(url);
+    if (rawText && rawText.trim().length > 0) {
+      extracted = {
+        title: userTitle || 'Direct Text Submission',
+        author: 'User Input',
+        text: rawText.trim(),
+        content_type: 'text',
+        domain: 'direct-input',
+        segments: []
+      };
       await Report.updateOne(
         { report_id: reportId },
         {
           status: 'extracted',
-          title: extracted.title || '',
-          author: extracted.author || '',
-          raw_text: extracted.text || '',
-          content_type: extracted.content_type || 'blog',
-          domain: extracted.domain || 'unknown',
+          title: extracted.title,
+          author: extracted.author,
+          raw_text: extracted.text,
+          content_type: extracted.content_type,
+          domain: extracted.domain,
         }
       );
       pushUpdate(reportId, {
@@ -74,47 +81,35 @@ async function runPipeline(reportId, url) {
         domain: extracted.domain,
         content_type: extracted.content_type
       });
-    } catch (err) {
-      console.warn(`[pipeline] Phase 1 extract failed for ${reportId} (${err.message}). Attempting resilient YouTube fallback...`);
-      if (url.includes('youtube.com') || url.includes('youtu.be')) {
-        try {
-          const axios = require('axios');
-          const oembedRes = await axios.get(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { timeout: 8000 });
-          const title = oembedRes.data?.title || 'YouTube Video';
-          const author = oembedRes.data?.author_name || 'YouTube Channel';
-          extracted = {
-            title,
-            author,
-            text: `Video Title: "${title}". Published by ${author} on YouTube. This news broadcast reports on statements and developments regarding ${title}.`,
-            content_type: 'youtube',
-            domain: 'youtube.com',
-            segments: [{ text: title, start: 0, duration: 5 }]
-          };
-          await Report.updateOne(
-            { report_id: reportId },
-            {
-              status: 'extracted',
-              title: extracted.title,
-              author: extracted.author,
-              raw_text: extracted.text,
-              content_type: 'youtube',
-              domain: 'youtube.com',
-            }
-          );
-          pushUpdate(reportId, {
+    } else {
+      try {
+        extracted = await api.extract(url);
+        await Report.updateOne(
+          { report_id: reportId },
+          {
             status: 'extracted',
-            title: extracted.title,
-            domain: extracted.domain,
-            content_type: extracted.content_type
-          });
-        } catch (oembedErr) {
-          console.error(`[pipeline] Node oEmbed fallback failed:`, oembedErr.message);
-        }
-      }
-
-      if (!extracted) {
+            title: extracted.title || '',
+            author: extracted.author || '',
+            raw_text: extracted.text || '',
+            content_type: extracted.content_type || 'blog',
+            domain: extracted.domain || 'unknown',
+          }
+        );
+        pushUpdate(reportId, {
+          status: 'extracted',
+          title: extracted.title,
+          domain: extracted.domain,
+          content_type: extracted.content_type
+        });
+      } catch (err) {
         console.error(`[pipeline] Phase 1 extract failed for ${reportId}:`, err.message);
-        return markFailed(reportId, 'Content extraction failed: ' + err.message);
+        const isYt = url && (url.includes('youtube.com') || url.includes('youtu.be'));
+        return markFailed(
+          reportId,
+          isYt
+            ? 'Spoken dialogue or captions could not be automatically retrieved for this YouTube video. Please use the "Paste Transcript / Text" option to verify the video claims directly.'
+            : 'Content extraction failed: ' + err.message
+        );
       }
     }
 
