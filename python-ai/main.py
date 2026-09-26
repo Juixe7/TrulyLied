@@ -592,30 +592,47 @@ def extract_content(req: ExtractRequest):
 
 @app.get("/debug/yt/{video_id}")
 def debug_yt_extraction(video_id: str):
-    import time
-    results = {}
-    
-    # Test 1: extract_subtitles_yt_dlp
+    import time, yt_dlp
     t0 = time.time()
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    ydl_opts = {
+        'skip_download': True,
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android']
+            }
+        },
+        'quiet': True,
+        'no_warnings': True,
+        'socket_timeout': 15,
+    }
+    debug_data = {}
     try:
-        from multimodal import extract_subtitles_yt_dlp
-        subs = extract_subtitles_yt_dlp(video_id)
-        results["yt_dlp"] = {"status": "success", "count": len(subs), "duration": round(time.time() - t0, 2)}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            sub_dict = info.get('subtitles', {}) or {}
+            auto_dict = info.get('automatic_captions', {}) or {}
+            debug_data["sub_langs"] = list(sub_dict.keys())
+            debug_data["auto_langs"] = list(auto_dict.keys())[:10]
+            
+            target_tracks = sub_dict.get('en') or auto_dict.get('en')
+            if target_tracks:
+                debug_data["formats"] = [t.get('ext') for t in target_tracks]
+                sub_url = target_tracks[0].get('url')
+                debug_data["sub_url_head"] = sub_url[:80] if sub_url else None
+                try:
+                    raw = ydl.urlopen(sub_url).read()
+                    debug_data["downloaded_bytes"] = len(raw)
+                    debug_data["content_sample"] = raw.decode('utf-8', errors='ignore')[:200]
+                except Exception as down_err:
+                    debug_data["download_error"] = str(down_err)
+            else:
+                debug_data["target_tracks"] = "none"
     except Exception as e:
-        import traceback
-        results["yt_dlp"] = {"status": "error", "error": str(e), "traceback": traceback.format_exc(), "duration": round(time.time() - t0, 2)}
-
-    # Test 2: YTT
-    t0 = time.time()
-    try:
-        ytt_api = YouTubeTranscriptApi()
-        res = _fetch_with_ytt(ytt_api, video_id)
-        results["ytt"] = {"status": "success", "count": len(res), "duration": round(time.time() - t0, 2)}
-    except Exception as e:
-        import traceback
-        results["ytt"] = {"status": "error", "error": str(e), "traceback": traceback.format_exc(), "duration": round(time.time() - t0, 2)}
-
-    return results
+        debug_data["extract_error"] = str(e)
+        
+    debug_data["duration"] = round(time.time() - t0, 2)
+    return debug_data
 
 # ── Live Video Fact-Check: Timestamped Transcript ──────────────────────────────
 
